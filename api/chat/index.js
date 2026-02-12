@@ -4,13 +4,27 @@
 const https = require('https');
 
 module.exports = async function (context, req) {
+    context.log('chat function invoked, method:', req.method);
+    
     // --- Parse body ---
     let parsedBody = req.body;
+    context.log('body type:', typeof parsedBody, 'is null:', parsedBody === null);
+    
     if (typeof parsedBody === 'string') {
         try { parsedBody = JSON.parse(parsedBody); } catch (e) {
+            context.log.error('JSON parse error:', e.message);
             context.res = { status: 400, body: { error: 'Body no es JSON valido' } };
             return;
         }
+    }
+
+    if (!parsedBody || typeof parsedBody !== 'object') {
+        context.res = {
+            status: 400,
+            headers: { 'Content-Type': 'application/json' },
+            body: { error: 'Body vacío o no es un objeto JSON' }
+        };
+        return;
     }
 
     // --- Config ---
@@ -86,6 +100,7 @@ module.exports = async function (context, req) {
         };
 
     } catch (err) {
+        context.log.error('Proxy error:', err.message, err.stack);
         context.res = {
             status: 502,
             headers: { 'Content-Type': 'application/json' },
