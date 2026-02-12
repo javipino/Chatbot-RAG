@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Consultas internas</title>
+    <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<!-- Sidebar overlay (mobile) -->
+<div class="sidebar-overlay" id="sidebar-overlay"></div>
+
+<!-- LEFT SIDEBAR -->
+<aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+        <span class="app-icon">🤖</span>
+        <h1>Consultas internas</h1>
+        <button class="sidebar-close" id="btn-close-sidebar">✕</button>
+    </div>
+
+    <!-- Status -->
+    <div class="status-bar">
+        <span id="status-dot" class="status-dot"></span>
+        <span id="status">Sin API key</span>
+    </div>
+
+    <!-- Action buttons -->
+    <div class="sidebar-actions">
+        <button class="action-btn primary" id="btn-new-chat">➕ Nueva</button>
+        <button class="action-btn" id="btn-test">⚡ Test</button>
+        <button class="action-btn" id="btn-export">💾</button>
+    </div>
+
+    <!-- Config (collapsible) -->
+    <div class="config-header" id="config-toggle">
+        <span id="config-arrow" class="arrow">▶</span>
+        <span>Configuración</span>
+    </div>
+    <div class="config-section" id="config-section">
+        <div class="cfg-group">
+            <label for="model-select">Modelo</label>
+            <select id="model-select"></select>
+        </div>
+        <div class="cfg-group" id="key-group-openai">
+            <label for="api-key">API Key (Azure OpenAI)</label>
+            <input type="password" id="api-key" placeholder="Key para GPT-5.2...">
+        </div>
+        <div class="cfg-group" id="key-group-kimi" style="display:none">
+            <label for="api-key-kimi">API Key (Kimi)</label>
+            <input type="password" id="api-key-kimi" placeholder="Key para Kimi K2.5">
+        </div>
+        <div class="cfg-group" id="key-group-rag" style="display:none">
+            <label for="api-key-rag">Function Key (RAG)</label>
+            <input type="password" id="api-key-rag" placeholder="Azure Function Key">
+        </div>
+        <div class="cfg-group" id="system-prompt-group">
+            <label for="system-prompt">System prompt</label>
+            <textarea id="system-prompt" rows="2" placeholder="Ej: Eres un asistente experto..."></textarea>
+        </div>
+        <button class="action-btn primary" id="btn-save-config">Guardar</button>
+    </div>
+
+    <!-- History -->
+    <div class="history-header">
+        <span>Historial</span>
+    </div>
+    <div id="history-list"></div>
+
+    <!-- Footer -->
+    <div class="sidebar-footer">
+        <button class="action-btn danger" id="btn-clear-history">🗑 Borrar todo</button>
+    </div>
+</aside>
+
+<!-- MAIN CHAT AREA -->
+<main class="main">
+    <!-- Mobile top bar -->
+    <div class="mobile-bar">
+        <button id="btn-toggle-sidebar">☰</button>
+        <span>Consultas internas</span>
+    </div>
+
+    <div id="chat"></div>
+    <div class="typing" id="typing"><span></span><span></span><span></span></div>
+
+    <div id="input-area">
+        <div id="preview-area"></div>
+        <div class="input-row">
+            <button class="attach-btn" id="btn-attach" title="Adjuntar archivo o imagen">📎</button>
+            <input type="file" id="file-input" multiple accept="image/*,.txt,.js,.py,.ts,.json,.csv,.xml,.html,.css,.md,.log,.sql,.yaml,.yml,.sh,.bat,.ps1,.jsx,.tsx,.c,.cpp,.h,.java,.cs,.go,.rs,.rb,.php,.swift,.kt" style="display:none">
+            <textarea id="user-input" rows="1" placeholder="Escribe un mensaje... (Ctrl+V para pegar imagen)" disabled></textarea>
+            <button id="btn-send" disabled>
+                <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+        </div>
+    </div>
+</main>
+
+<!-- JavaScript modules -->
+<script src="js/config.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/api.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/chat.js"></script>
+<script src="js/app.js"></script>
+
+</body>
+</html>
