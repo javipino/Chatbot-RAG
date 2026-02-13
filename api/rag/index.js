@@ -341,8 +341,6 @@ async function callGPT(context, messages) {
         headers: { 'Content-Type': 'application/json', 'api-key': GPT_KEY }
     }, {
         messages: augmentedMessages,
-        temperature: 0.1,
-        reasoning_effort: 'high',
         max_completion_tokens: 4096
     });
 
