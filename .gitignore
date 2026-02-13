@@ -46,3 +46,16 @@ Thumbs.db
 # Archivos temporales
 *.tmp
 *.bak
+
+# PDFs descargados
+*.pdf
+data/sentencias/
+data/sentencias_vlex/
+
+# Archivos de progreso y datos intermedios
+data/chunks/normativa_sparse_vectors.json
+data/chunks/qdrant_upload_progress.json
+data/tfidf_vocabulary.json
+
+# Scripts exploratorios/temporales
+src/scripts/_*
