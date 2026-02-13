@@ -9,12 +9,9 @@ const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
 const READER_ENDPOINT = process.env.AZURE_OPENAI_READER_ENDPOINT || 'openai-reader-javi.cognitiveservices.azure.com';
 const READER_KEY = process.env.AZURE_OPENAI_READER_KEY;
 
-const GPT_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT || 'javie-mku5l3k8-swedencentral.cognitiveservices.azure.com';
-const GPT_KEY = process.env.AZURE_OPENAI_KEY;
-
 const EMBEDDING_DEPLOYMENT = 'text-embedding-3-small';
 const NANO_DEPLOYMENT = 'gpt-5-nano';
-const GPT_DEPLOYMENT = 'gpt-5.2';
+const KIMI_DEPLOYMENT = 'Kimi-K2.5';
 
 // Colecciones y sus pesos para cross-collection search
 const COLLECTIONS = [
@@ -586,7 +583,6 @@ async function chaseReferences(missingRefs, context) {
 // ── Stage 5c: Context Evaluator (Kimi K2.5) — iterative ──
 // Kimi evaluates if context is sufficient. If not, it requests more articles and drops irrelevant ones.
 // Returns: { ready: true } or { ready: false, need: [{art, ley}], drop: [indices] }
-const KIMI_DEPLOYMENT = 'Kimi-K2.5';
 
 async function evaluateContext(query, results, context) {
     const numbered = results.map((r, i) => {
@@ -673,8 +669,8 @@ DROP|0,3,7`
     }
 }
 
-// ── Stage 6: Call GPT for final answer ──
-async function callGPT(context, messages) {
+// ── Stage 6: Call Kimi K2.5 for final answer ──
+async function callAnswerModel(context, messages) {
     const augmentedMessages = [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'system', content: `CONTEXTO DE NORMATIVA VIGENTE:\n\n${context}` }
@@ -688,10 +684,10 @@ async function callGPT(context, messages) {
     }
 
     const result = await httpsRequest({
-        hostname: GPT_ENDPOINT,
-        path: `/openai/deployments/${GPT_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
+        hostname: READER_ENDPOINT,
+        path: `/openai/deployments/${KIMI_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': GPT_KEY }
+        headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
     }, {
         messages: augmentedMessages,
         max_completion_tokens: 4096
@@ -806,9 +802,9 @@ module.exports = async function (context, req) {
             context.log.error('5c eval failed (non-fatal):', evalErr.message);
         }
 
-        // Stage 6: Build context + call GPT-5.2 (single call with clean, complete context)
+        // Stage 6: Build context + call Kimi K2.5 (single call with clean, complete context)
         const ragContext = buildContext(allResults);
-        const answer = await callGPT(ragContext, messages);
+        const answer = await callAnswerModel(ragContext, messages);
 
         const sources = allResults.map(r => ({
             law: r.law || '',

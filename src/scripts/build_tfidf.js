@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 
 // --- Rutas ---
-const CHUNKS_PATH = path.join(__dirname, '..', '..', 'data', 'chunks', 'normativa_chunks_enriched.json');
+const CHUNKS_PATH = path.join(__dirname, '..', '..', 'data', 'chunks', 'normativa_chunks_v3_enriched.json');
 const VOCAB_OUTPUT = path.join(__dirname, '..', '..', 'data', 'tfidf_vocabulary.json');
 const SPARSE_OUTPUT = path.join(__dirname, '..', '..', 'data', 'chunks', 'normativa_sparse_vectors.json');
 const API_VOCAB_OUTPUT = path.join(__dirname, '..', '..', 'api', 'data', 'tfidf_vocabulary.json');

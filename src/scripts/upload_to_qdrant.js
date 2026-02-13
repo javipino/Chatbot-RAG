@@ -16,7 +16,7 @@ const fs = require('fs');
 const path = require('path');
 
 // --- Configuración ---
-const CHUNKS_PATH = path.join(__dirname, '..', '..', 'data', 'chunks', 'normativa_chunks_enriched.json');
+const CHUNKS_PATH = path.join(__dirname, '..', '..', 'data', 'chunks', 'normativa_chunks_v3_enriched.json');
 const SPARSE_PATH = path.join(__dirname, '..', '..', 'data', 'chunks', 'normativa_sparse_vectors.json');
 const PROGRESS_PATH = path.join(__dirname, '..', '..', 'data', 'chunks', 'qdrant_upload_progress.json');
 const ENV_PATH = path.join(__dirname, '..', '..', '.env');
@@ -26,6 +26,7 @@ const args = process.argv.slice(2);
 const collectionArg = args.indexOf('--collection') !== -1 ? args[args.indexOf('--collection') + 1] : 'normativa';
 const batchSizeArg = args.indexOf('--batch-size') !== -1 ? parseInt(args[args.indexOf('--batch-size') + 1]) : 50;
 const resumeMode = args.includes('--resume');
+const wipeMode = args.includes('--wipe');
 
 // --- Cargar .env ---
 function loadEnv() {
@@ -96,12 +97,15 @@ async function upsertBatch(collection, points) {
 }
 
 // --- Construir texto para embedding ---
+// text-embedding-3-small max = 8191 tokens (~32K chars). Truncamos a 30K para margen.
+const MAX_EMBED_CHARS = 30000;
 function buildEmbeddingText(chunk) {
     const parts = [];
     if (chunk.law) parts.push(chunk.law);
     if (chunk.section) parts.push(chunk.section);
     if (chunk.text) parts.push(chunk.text);
-    return parts.join('\n');
+    const full = parts.join('\n');
+    return full.length > MAX_EMBED_CHARS ? full.slice(0, MAX_EMBED_CHARS) : full;
 }
 
 // --- Sleep ---
@@ -129,7 +133,45 @@ async function main() {
     console.log(`Colección: ${collectionArg}`);
     console.log(`Batch size: ${batchSizeArg}`);
     console.log(`Qdrant: ${QDRANT_URL}`);
-    console.log(`Embeddings: ${READER_ENDPOINT}\n`);
+    console.log(`Embeddings: ${READER_ENDPOINT}`);
+    if (wipeMode) console.log(`⚠️  WIPE MODE: se borrará y recreará la colección`);
+    console.log();
+
+    // 0. Wipe collection if requested
+    if (wipeMode) {
+        console.log('Borrando colección existente...');
+        try {
+            const delResp = await fetch(`${QDRANT_URL}/collections/${collectionArg}`, {
+                method: 'DELETE',
+                headers: { 'api-key': QDRANT_API_KEY },
+            });
+            console.log(`  DELETE: ${delResp.status}`);
+        } catch (e) {
+            console.log(`  (No existía o error: ${e.message})`);
+        }
+        await sleep(2000);
+
+        console.log('Recreando colección...');
+        const createResp = await fetch(`${QDRANT_URL}/collections/${collectionArg}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY },
+            body: JSON.stringify({
+                vectors: {
+                    'text-dense': { size: 1536, distance: 'Cosine' },
+                },
+                sparse_vectors: {
+                    'text-sparse': {},
+                },
+            }),
+        });
+        if (!createResp.ok) {
+            const err = await createResp.text();
+            console.error(`ERROR creando colección: ${err}`);
+            process.exit(1);
+        }
+        console.log('  ✅ Colección recreada.\n');
+        await sleep(2000);
+    }
 
     // 1. Cargar chunks
     console.log('Cargando chunks...');
