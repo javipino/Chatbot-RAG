@@ -470,7 +470,7 @@ async function chaseReferences(missingRefs, context) {
 
             if (context?.log) context.log(`  Chasing Art.${artBase} (law filter: "${lawWords}")`);
 
-            // Use Qdrant scroll with payload text filter
+            // Strategy 1: Filter search by section + law metadata
             const scrollResult = await httpsRequest({
                 hostname: qdrantUrl.hostname,
                 port: qdrantUrl.port || 6333,
@@ -488,19 +488,95 @@ async function chaseReferences(missingRefs, context) {
                 }
             });
 
-            const points = (scrollResult.result?.points || []).map(p => ({
+            let points = (scrollResult.result?.points || []);
+            if (context?.log) context.log(`  → Filter found ${points.length} chunks for Art.${artBase}`);
+
+            // Strategy 2: Semantic search fallback — catches mislabeled chunks
+            // (e.g., Art. 48 ET content split across chunks with wrong section metadata)
+            const searchQuery = `Artículo ${ref.art} ${ref.ley}`;
+            const searchEmbedding = await embedQuery(searchQuery);
+            const semanticResult = await httpsRequest({
+                hostname: qdrantUrl.hostname,
+                port: qdrantUrl.port || 6333,
+                path: '/collections/normativa/points/query',
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY }
+            }, {
+                query: searchEmbedding,
+                using: 'text-dense',
+                limit: 5,
+                with_payload: true,
+                filter: {
+                    must: [
+                        { key: 'law', match: { text: lawWords } }
+                    ]
+                }
+            });
+            const semanticPoints = (semanticResult.result?.points || []);
+            if (context?.log) context.log(`  → Semantic found ${semanticPoints.length} chunks for "${searchQuery}"`);
+
+            // Merge both strategies (dedup by id)
+            const seenIds = new Set(points.map(p => p.id));
+            for (const sp of semanticPoints) {
+                if (!seenIds.has(sp.id)) {
+                    points.push(sp);
+                    seenIds.add(sp.id);
+                }
+            }
+
+            // Strategy 3: Adjacent chunk retrieval — grab neighboring chunks (±2) for each found
+            // This catches article continuations that were split into multiple chunks
+            const adjacentIds = new Set();
+            for (const p of points) {
+                const id = typeof p.id === 'number' ? p.id : parseInt(p.id);
+                if (!isNaN(id)) {
+                    for (let offset = -2; offset <= 2; offset++) {
+                        const adjId = id + offset;
+                        if (adjId >= 0 && !seenIds.has(adjId)) {
+                            adjacentIds.add(adjId);
+                        }
+                    }
+                }
+            }
+
+            if (adjacentIds.size > 0) {
+                const adjResult = await httpsRequest({
+                    hostname: qdrantUrl.hostname,
+                    port: qdrantUrl.port || 6333,
+                    path: '/collections/normativa/points/scroll',
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY }
+                }, {
+                    limit: adjacentIds.size,
+                    with_payload: true,
+                    filter: {
+                        must: [
+                            { has_id: [...adjacentIds] }
+                        ]
+                    }
+                });
+
+                const adjPoints = (adjResult.result?.points || [])
+                    .filter(p => (p.payload?.law || '').toLowerCase().includes(lawWords.split(' ')[0]?.toLowerCase() || ''));
+
+                if (context?.log) context.log(`  → Adjacent found ${adjPoints.length} neighbor chunks (from ${adjacentIds.size} candidates)`);
+                points.push(...adjPoints);
+            }
+
+            // Convert all to result format
+            const mapped = points.map(p => ({
                 ...p.payload,
-                score: 1.0,
+                score: p.score || 1.0,
                 collection: 'normativa',
                 id: p.id,
                 _chased: true,
                 _reason: ref.motivo || `Referenced: Art.${ref.art} ${ref.ley}`
             }));
 
-            if (context?.log) context.log(`  → Found ${points.length} chunks for Art.${artBase}`);
-            allMatched.push(...points);
+            if (context?.log) context.log(`  → Total ${mapped.length} chunks for Art.${artBase}`);
+            allMatched.push(...mapped);
         } catch (err) {
-            if (context?.log) context.log(`  Scroll failed for Art.${ref.art}: ${err.message}`);
+            if (context?.log) context.log(`  Chase failed for Art.${ref.art}: ${err.message}`);
         }
     }
 
