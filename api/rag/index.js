@@ -181,7 +181,16 @@ Reglas:
 - Si la pregunta es clara por sí sola, expándela con sinónimos legales y artículos relevantes.
 - Si la pregunta es una continuación de la conversación (ej: "¿y si no me las dan?"), usa el historial para entender el tema y genera una query completa y autocontenida.
 - Responde SOLO con la query expandida, sin explicaciones.
-- Incluye términos técnicos del derecho laboral español.`
+- Incluye términos técnicos del derecho laboral español.
+- IMPORTANTE: Traduce siempre los términos coloquiales a sus equivalentes legales:
+  * "baja de maternidad/paternidad" → "suspensión del contrato por nacimiento y cuidado de menor, artículo 48 Estatuto de los Trabajadores, prestación por nacimiento"
+  * "despido" → "extinción del contrato de trabajo, despido objetivo, disciplinario, artículo 49-56 ET"
+  * "paro" → "prestación por desempleo, artículo 262-267 LGSS"
+  * "baja médica" → "incapacidad temporal, artículo 169-176 LGSS"
+  * "pensión" → "prestación contributiva de jubilación, artículo 204-215 LGSS"
+  * "contrato temporal" → "contrato de duración determinada, artículo 15 ET"
+  * "finiquito" → "liquidación de haberes, extinción del contrato"
+- Incluye siempre las dos versiones: el término coloquial Y el término legal formal.`
             }
         ];
 
@@ -413,10 +422,11 @@ module.exports = async function (context, req) {
 
         // Stage 1: Query Expansion (Nano) — context-aware with conversation history
         const expandedQuery = await expandQuery(query, messages);
-        context.log(`Expanded: "${expandedQuery.substring(0, 100)}"`);
+        context.log(`Expanded: "${expandedQuery.substring(0, 150)}"`);
 
-        // Stage 2: Embed original query
-        const embedding = await embedQuery(query);
+        // Stage 2: Embed EXPANDED query (critical: expanded query contains legal terms
+        // that match the actual normative text, e.g. "nacimiento" vs colloquial "maternidad")
+        const embedding = await embedQuery(expandedQuery);
 
         // Stage 3: Build sparse vector from expanded query
         const sparseVector = buildSparseVector(expandedQuery);
