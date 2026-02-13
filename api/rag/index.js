@@ -373,106 +373,105 @@ function buildContext(results) {
     }).join('\n\n---\n\n');
 }
 
-// ── Stage 5b: Reference Chasing ──
-// Scan results for references to articles in other laws that aren't in the results.
-// Do a second targeted search to retrieve those missing referenced articles.
-function extractMissingReferences(results) {
-    // Patterns to find legal references in Spanish normative text
-    const refPatterns = [
-        // "artículo 48.4 del Estatuto de los Trabajadores" / "de la Ley del Estatuto..."
-        /art[íi]culos?\s+([\d]+(?:\.[\d]+)?(?:\s*(?:y|,|a)\s*[\d]+(?:\.[\d]+)?)*)\s+(?:del?\s+)?(?:la?\s+)?(?:(?:texto\s+refundido\s+de\s+la\s+)?Ley\s+(?:del?\s+)?)?Estatuto\s+de\s+los\s+Trabajadores/gi,
-        // "artículo 169 de la Ley General de la Seguridad Social" / "LGSS"
-        /art[íi]culos?\s+([\d]+(?:\.[\d]+)?(?:\s*(?:y|,|a)\s*[\d]+(?:\.[\d]+)?)*)\s+(?:del?\s+)?(?:la?\s+)?(?:texto\s+refundido\s+de\s+la\s+)?Ley\s+General\s+de\s+la\s+Seguridad\s+Social/gi,
-        // "artículo 48.4 ET" / "art. 48.4 del ET"
-        /art[íi]culos?\s+([\d]+(?:\.[\d]+)?)\s+(?:del?\s+)?(?:la?\s+)?(?:ET|L\.?E\.?T\.?A?)\b/gi,
-        // "artículo 267 LGSS" / "art. 267 de la LGSS"
-        /art[íi]culos?\s+([\d]+(?:\.[\d]+)?)\s+(?:del?\s+)?(?:la?\s+)?LGSS/gi,
-    ];
+// ── Stage 5b: Reference Chasing (LLM-based) ──
+// Use Nano to analyze results and identify missing legal articles that should be retrieved.
+// More robust than regex: catches implicit references and uses pre-trained legal knowledge.
+async function identifyMissingReferences(query, results, context) {
+    // Build a summary of what we already have
+    const sourceSummary = results.map((r, i) =>
+        `[${i}] ${r.law || '?'} > ${r.section || '?'}`
+    ).join('\n');
 
-    // Map short names to full law names as they appear in chunks
-    const lawAliases = {
-        'Estatuto de los Trabajadores': 'Texto refundido de la Ley del Estatuto de los Trabajadores',
-        'Ley General de la Seguridad Social': 'Texto refundido de la Ley General de la Seguridad Social',
-        'ET': 'Texto refundido de la Ley del Estatuto de los Trabajadores',
-        'LETA': 'Ley del Estatuto del Trabajo Autónomo',
-        'LGSS': 'Texto refundido de la Ley General de la Seguridad Social',
-    };
+    const textSnippets = results.map((r, i) =>
+        `[${i}] ${(r.text || '').substring(0, 150)}`
+    ).join('\n');
 
-    // Collect all referenced articles
-    const references = [];
-    for (const r of results) {
-        const text = (r.text || '') + ' ' + (r.resumen || '');
-        for (const pattern of refPatterns) {
-            pattern.lastIndex = 0;
-            let match;
-            while ((match = pattern.exec(text)) !== null) {
-                const artNum = match[1].split(/\s*[,ya]\s*/)[0].trim(); // first article number
-                const fullMatch = match[0];
-                // Determine the law name
-                let lawName = null;
-                for (const [alias, full] of Object.entries(lawAliases)) {
-                    if (fullMatch.toLowerCase().includes(alias.toLowerCase())) {
-                        lawName = full;
-                        break;
-                    }
+    try {
+        const result = await httpsRequest({
+            hostname: READER_ENDPOINT,
+            path: `/openai/deployments/${NANO_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
+        }, {
+            messages: [
+                {
+                    role: 'system',
+                    content: `Identifica artículos de ley española que faltan para responder la pregunta del usuario.
+RESPONDE SOLO líneas con formato: ARTICULO|NOMBRE_LEY
+Ejemplo de respuesta:
+48|Estatuto Trabajadores
+177|Ley General Seguridad Social
+Máximo 3 líneas. Si no falta nada, responde: NINGUNO`
+                },
+                {
+                    role: 'user',
+                    content: `Pregunta: ${query}\n\nFragmentos disponibles:\n${sourceSummary}\n\nTexto:\n${textSnippets}\n\nArtículos que FALTAN:`
                 }
-                if (lawName) {
-                    references.push({ artNum, lawName, query: `Artículo ${artNum} ${lawName}` });
+            ],
+            max_completion_tokens: 2048,
+            reasoning_effort: 'low'
+        });
+
+        const content = result.choices?.[0]?.message?.content || '';
+        if (context?.log) context.log(`Nano ref analysis raw: ${content.substring(0, 300)}`);
+
+        if (content.includes('NINGUNO') || !content.trim()) return [];
+
+        // Parse pipe-delimited lines: "48|Estatuto Trabajadores" or "48|Estatuto Trabajadores|motivo"
+        const refs = [];
+        for (const line of content.split('\n')) {
+            const parts = line.trim().split('|');
+            if (parts.length >= 2) {
+                // Extract article number from first field (handles "48", "Art. 48", "artículo 48.4")
+                const artMatch = parts[0].trim().match(/(\d+(?:\.\d+)?)/);
+                // Extract article number from motivo field if first field was an ordinal (1, 2, 3)
+                const motivoArtMatch = parts.length >= 3 ? parts[2].trim().match(/art[íi]culo\s+(\d+(?:\.\d+)?)/i) : null;
+                
+                const artNum = motivoArtMatch ? motivoArtMatch[1] : (artMatch ? artMatch[1] : null);
+                if (artNum && parts[1].trim().length > 3) {
+                    refs.push({
+                        art: artNum,
+                        ley: parts[1].trim(),
+                        motivo: parts[2]?.trim() || ''
+                    });
                 }
             }
         }
-    }
 
-    // Deduplicate
-    const seen = new Set();
-    const unique = references.filter(ref => {
-        const key = `${ref.lawName}|${ref.artNum}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
-
-    // Filter out references already in results
-    const existingArticles = new Set();
-    for (const r of results) {
-        const section = (r.section || '').toLowerCase();
-        const law = (r.law || '').toLowerCase();
-        // Extract article number from section like "Artículo 48. ..."
-        const artMatch = section.match(/art[íi]culo\s+([\d]+)/i);
-        if (artMatch) {
-            existingArticles.add(`${law}|${artMatch[1]}`);
+        // Fallback: try JSON format if Nano produced it
+        if (refs.length === 0) {
+            const jsonMatch = content.match(/\[[\s\S]*\]/);
+            if (jsonMatch) {
+                try {
+                    const parsed = JSON.parse(jsonMatch[0]);
+                    return parsed.filter(r => r.art && r.ley).slice(0, 3);
+                } catch { /* ignore parse error */ }
+            }
         }
-    }
 
-    return unique.filter(ref => {
-        const key = `${ref.lawName.toLowerCase()}|${ref.artNum.split('.')[0]}`;
-        return !existingArticles.has(key);
-    });
+        return refs.slice(0, 3);
+    } catch (e) {
+        if (context?.log) context.log(`Nano ref analysis failed: ${e.message}`);
+    }
+    return [];
 }
 
 async function chaseReferences(missingRefs, context) {
     if (!missingRefs.length) return [];
 
-    // Limit to top 3 most important references to avoid excessive API calls
-    const toChase = missingRefs.slice(0, 3);
-
-    if (context && context.log) {
-        context.log(`Reference chasing: ${toChase.length} missing refs: ${toChase.map(r => r.query).join(', ')}`);
-    }
-
-    // Strategy A: Use Qdrant scroll + payload filter (deterministic, most reliable)
-    // Try to find each referenced article by filtering on law + section fields
     const qdrantUrl = new URL(QDRANT_URL);
-    let allMatched = [];
+    const allMatched = [];
 
-    for (const ref of toChase) {
+    for (const ref of missingRefs) {
         try {
-            // Scroll with filter: section must contain "Artículo {num}" and law must match
-            const artBase = ref.artNum.split('.')[0];
-            // Extract key words from lawName for text filter (e.g., "Estatuto Trabajadores")
-            const lawWords = ref.lawName.replace(/Texto refundido de la Ley del?/gi, '').trim()
+            // Extract law keywords for Qdrant text filter
+            const lawWords = ref.ley.replace(/Texto refundido de la Ley del?/gi, '').trim()
                 .split(/\s+/).filter(w => w.length > 3).slice(0, 2).join(' ');
+            const artBase = ref.art.split('.')[0];
 
+            if (context?.log) context.log(`  Chasing Art.${artBase} (law filter: "${lawWords}")`);
+
+            // Use Qdrant scroll with payload text filter
             const scrollResult = await httpsRequest({
                 hostname: qdrantUrl.hostname,
                 port: qdrantUrl.port || 6333,
@@ -480,7 +479,7 @@ async function chaseReferences(missingRefs, context) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY }
             }, {
-                limit: 5,
+                limit: 3,
                 with_payload: true,
                 filter: {
                     must: [
@@ -490,53 +489,23 @@ async function chaseReferences(missingRefs, context) {
                 }
             });
 
-            const scrollPoints = (scrollResult.result?.points || []).map(p => ({
+            const points = (scrollResult.result?.points || []).map(p => ({
                 ...p.payload,
                 score: 1.0,
                 collection: 'normativa',
-                id: p.id
+                id: p.id,
+                _chased: true,
+                _reason: ref.motivo || `Referenced: Art.${ref.art} ${ref.ley}`
             }));
 
-            if (context && context.log) {
-                context.log(`  Scroll for Art.${artBase} (law: ${lawWords}): ${scrollPoints.length} results`);
-            }
-            allMatched.push(...scrollPoints);
-        } catch (scrollErr) {
-            if (context && context.log) {
-                context.log(`  Scroll failed for ${ref.query}: ${scrollErr.message}`);
-            }
+            if (context?.log) context.log(`  → Found ${points.length} chunks for Art.${artBase}`);
+            allMatched.push(...points);
+        } catch (err) {
+            if (context?.log) context.log(`  Scroll failed for Art.${ref.art}: ${err.message}`);
         }
     }
 
-    // Strategy B fallback: if scroll found nothing, try embedding search
-    if (allMatched.length === 0) {
-        try {
-            const combinedQuery = toChase.map(r => r.query).join('. ');
-            const embedding = await embedQuery(combinedQuery);
-            const sparseVector = buildSparseVector(combinedQuery);
-            const results = await searchCollection('normativa', embedding, sparseVector, 6);
-
-            allMatched = results.filter(r => {
-                const section = (r.section || '').toLowerCase();
-                const law = (r.law || '').toLowerCase();
-                return toChase.some(ref =>
-                    law.includes(ref.lawName.toLowerCase().substring(0, 30)) &&
-                    section.includes(`artículo ${ref.artNum.split('.')[0]}`)
-                );
-            });
-
-            if (context && context.log) {
-                context.log(`  Embedding fallback: ${results.length} raw → ${allMatched.length} filtered`);
-            }
-        } catch (embErr) {
-            if (context && context.log) {
-                context.log(`  Embedding fallback failed: ${embErr.message}`);
-            }
-        }
-    }
-
-    // Mark these as reference-chased for context building
-    return allMatched.map(r => ({ ...r, _chased: true }));
+    return allMatched;
 }
 
 // ── Stage 6b: Call GPT for final answer ──
@@ -605,31 +574,29 @@ module.exports = async function (context, req) {
         const rerankedResults = await rerankResults(query, searchResults);
         context.log(`After reranking: ${rerankedResults.length} results`);
 
-        // Stage 5b: Reference Chasing — find articles referenced in results but not retrieved
+        // Stage 5b: Reference Chasing (LLM) — Nano analyzes results to find missing key articles
         let allResults = rerankedResults;
         let debugRefChasing = { missingRefs: [], chasedAdded: 0, error: null };
         try {
-            const missingRefs = extractMissingReferences(rerankedResults);
-            debugRefChasing.missingRefs = missingRefs.map(r => r.query);
+            const missingRefs = await identifyMissingReferences(query, rerankedResults, context);
+            debugRefChasing.missingRefs = missingRefs.map(r => `Art.${r.art} ${r.ley}: ${r.motivo || ''}`);
             if (missingRefs.length > 0) {
-                context.log(`Reference chasing: found ${missingRefs.length} missing refs: ${missingRefs.map(r => r.query).join(', ')}`);
+                context.log(`Reference chasing: Nano identified ${missingRefs.length} missing: ${missingRefs.map(r => `Art.${r.art} ${r.ley}`).join(', ')}`);
                 const chasedResults = await chaseReferences(missingRefs, context);
-                context.log(`Reference chasing: got ${chasedResults.length} results from chase`);
+                context.log(`Reference chasing: retrieved ${chasedResults.length} chunks`);
                 if (chasedResults.length > 0) {
-                    // Deduplicate by id
                     const existingIds = new Set(rerankedResults.map(r => r.id));
                     const newResults = chasedResults.filter(r => !existingIds.has(r.id));
                     allResults = [...rerankedResults, ...newResults];
                     debugRefChasing.chasedAdded = newResults.length;
-                    context.log(`Reference chasing added ${newResults.length} chunks`);
+                    context.log(`Reference chasing added ${newResults.length} new chunks`);
                 }
             } else {
-                context.log('Reference chasing: no missing refs found in results');
+                context.log('Reference chasing: Nano found no missing refs');
             }
         } catch (refErr) {
             debugRefChasing.error = refErr.message;
             context.log.error('Reference chasing failed (non-fatal):', refErr.message);
-            // Continue with original results
         }
 
         // Stage 6: Build context + call GPT
