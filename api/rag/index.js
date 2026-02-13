@@ -155,22 +155,49 @@ function httpsRequest(options, body) {
     });
 }
 
-// ── Stage 1: Query Expansion with Nano ──
-async function expandQuery(query) {
+// ── Stage 1: Query Expansion with Nano (context-aware) ──
+async function expandQuery(query, conversationHistory) {
     try {
+        // Build conversation context for Nano so it understands follow-up questions
+        const nanoMessages = [
+            {
+                role: 'system',
+                content: `Eres un asistente legal. Tu tarea es reformular la pregunta del usuario para buscar en una base de datos de normativa laboral y de Seguridad Social española.
+
+Reglas:
+- Si la pregunta es clara por sí sola, expándela con sinónimos legales y artículos relevantes.
+- Si la pregunta es una continuación de la conversación (ej: "¿y si no me las dan?"), usa el historial para entender el tema y genera una query completa y autocontenida.
+- Responde SOLO con la query expandida, sin explicaciones.
+- Incluye términos técnicos del derecho laboral español.`
+            }
+        ];
+
+        // Add recent conversation for context (last 4 messages max, trimmed)
+        if (conversationHistory && conversationHistory.length > 0) {
+            const recent = conversationHistory.slice(-4);
+            for (const msg of recent) {
+                if (msg.role === 'user' || msg.role === 'assistant') {
+                    nanoMessages.push({
+                        role: msg.role,
+                        content: (msg.content || '').substring(0, 300)
+                    });
+                }
+            }
+        }
+
+        // Add the current query as the final user message (if not already the last)
+        const lastMsg = nanoMessages[nanoMessages.length - 1];
+        if (!lastMsg || lastMsg.role !== 'user' || lastMsg.content !== query) {
+            nanoMessages.push({ role: 'user', content: query });
+        }
+
         const result = await httpsRequest({
             hostname: READER_ENDPOINT,
             path: `/openai/deployments/${NANO_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
         }, {
-            messages: [
-                {
-                    role: 'system',
-                    content: 'Eres un asistente legal. Dada una pregunta del usuario, genera una versión expandida con sinónimos legales, artículos relevantes y términos técnicos del derecho laboral y de Seguridad Social español. Responde SOLO con la query expandida, sin explicaciones.'
-                },
-                { role: 'user', content: query }
-            ],
+            messages: nanoMessages,
             max_completion_tokens: 200
         });
         return result.choices?.[0]?.message?.content || query;
@@ -367,8 +394,8 @@ module.exports = async function (context, req) {
         const query = userMessage.content;
         context.log(`RAG query: "${query.substring(0, 100)}"`);
 
-        // Stage 1: Query Expansion (Nano)
-        const expandedQuery = await expandQuery(query);
+        // Stage 1: Query Expansion (Nano) — context-aware with conversation history
+        const expandedQuery = await expandQuery(query, messages);
         context.log(`Expanded: "${expandedQuery.substring(0, 100)}"`);
 
         // Stage 2: Embed original query
