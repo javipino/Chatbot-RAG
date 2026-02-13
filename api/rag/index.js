@@ -507,7 +507,97 @@ async function chaseReferences(missingRefs, context) {
     return allMatched;
 }
 
-// ── Stage 6b: Call GPT for final answer ──
+// ── Stage 5c: Context Evaluator (Kimi K2.5) — iterative ──
+// Kimi evaluates if context is sufficient. If not, it requests more articles and drops irrelevant ones.
+// Returns: { ready: true } or { ready: false, need: [{art, ley}], drop: [indices] }
+const KIMI_DEPLOYMENT = 'Kimi-K2.5';
+
+async function evaluateContext(query, results, context) {
+    const numbered = results.map((r, i) => {
+        const parts = [`[${i}] ${r.law || '?'} > ${r.section || '?'}`];
+        if (r.text) parts.push(r.text.substring(0, 200));
+        return parts.join('\n');
+    }).join('\n\n');
+
+    try {
+        const result = await httpsRequest({
+            hostname: READER_ENDPOINT,
+            path: `/openai/deployments/${KIMI_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
+        }, {
+            messages: [
+                {
+                    role: 'system',
+                    content: `Eres un evaluador de contexto legal. Tu tarea es decidir si los fragmentos proporcionados son SUFICIENTES para responder la pregunta del usuario sobre legislación laboral española.
+
+RESPONDE con EXACTAMENTE uno de estos formatos:
+
+OPCIÓN A — Si el contexto es SUFICIENTE para responder:
+READY
+
+OPCIÓN B — Si FALTA información crítica:
+NEED|número_artículo|nombre_ley
+DROP|índices_irrelevantes
+
+Reglas para NEED:
+- Solo pide artículos que sean IMPRESCINDIBLES para responder correctamente
+- Máximo 3 líneas NEED
+- Usa el nombre corto de la ley (ej: "Estatuto Trabajadores", "LGSS")
+
+Reglas para DROP:
+- Lista los índices [N] de fragmentos que NO aportan nada a la respuesta
+- Separados por comas en UNA sola línea
+- Si todos son relevantes, no incluyas línea DROP
+
+Ejemplo de respuesta B:
+NEED|48|Estatuto Trabajadores
+NEED|177|LGSS
+DROP|0,3,7`
+                },
+                {
+                    role: 'user',
+                    content: `Pregunta: ${query}\n\nFragmentos disponibles:\n${numbered}`
+                }
+            ],
+            max_completion_tokens: 2048,
+            reasoning_effort: 'low'
+        });
+
+        const content = result.choices?.[0]?.message?.content || '';
+        if (context?.log) context.log(`Kimi eval raw: ${content.substring(0, 300)}`);
+
+        if (content.includes('READY')) {
+            return { ready: true, need: [], drop: [] };
+        }
+
+        // Parse NEED lines
+        const need = [];
+        for (const line of content.split('\n')) {
+            const needMatch = line.trim().match(/^NEED\|(.+)\|(.+)$/);
+            if (needMatch) {
+                const artMatch = needMatch[1].trim().match(/(\d+(?:\.\d+)?)/);
+                if (artMatch) {
+                    need.push({ art: artMatch[1], ley: needMatch[2].trim() });
+                }
+            }
+        }
+
+        // Parse DROP line
+        let drop = [];
+        const dropMatch = content.match(/^DROP\|([\d,\s]+)$/m);
+        if (dropMatch) {
+            drop = dropMatch[1].split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+        }
+
+        return { ready: false, need: need.slice(0, 3), drop };
+    } catch (e) {
+        if (context?.log) context.log(`Kimi eval failed: ${e.message}`);
+        return { ready: true, need: [], drop: [] }; // On error, proceed with what we have
+    }
+}
+
+// ── Stage 6: Call GPT for final answer ──
 async function callGPT(context, messages) {
     const augmentedMessages = [
         { role: 'system', content: SYSTEM_PROMPT },
@@ -558,8 +648,7 @@ module.exports = async function (context, req) {
         const expandedQuery = await expandQuery(query, messages);
         context.log(`Expanded: "${expandedQuery.substring(0, 150)}"`);
 
-        // Stage 2: Embed EXPANDED query (critical: expanded query contains legal terms
-        // that match the actual normative text, e.g. "nacimiento" vs colloquial "maternidad")
+        // Stage 2: Embed EXPANDED query
         const embedding = await embedQuery(expandedQuery);
 
         // Stage 3: Build sparse vector from expanded query
@@ -573,32 +662,75 @@ module.exports = async function (context, req) {
         const rerankedResults = await rerankResults(query, searchResults);
         context.log(`After reranking: ${rerankedResults.length} results`);
 
-        // Stage 5b: Reference Chasing (LLM) — Nano analyzes results to find missing key articles
-        let allResults = rerankedResults;
+        // Stage 5b: Reference Chasing (DeepSeek — cheap first pass)
+        let allResults = [...rerankedResults];
         let debugRefChasing = { missingRefs: [], chasedAdded: 0, error: null };
         try {
             const missingRefs = await identifyMissingReferences(query, rerankedResults, context);
-            debugRefChasing.missingRefs = missingRefs.map(r => `Art.${r.art} ${r.ley}: ${r.motivo || ''}`);
+            debugRefChasing.missingRefs = missingRefs.map(r => `Art.${r.art} ${r.ley}`);
             if (missingRefs.length > 0) {
-                context.log(`Reference chasing: Nano identified ${missingRefs.length} missing: ${missingRefs.map(r => `Art.${r.art} ${r.ley}`).join(', ')}`);
+                context.log(`5b: DeepSeek identified ${missingRefs.length} missing: ${missingRefs.map(r => `Art.${r.art} ${r.ley}`).join(', ')}`);
                 const chasedResults = await chaseReferences(missingRefs, context);
-                context.log(`Reference chasing: retrieved ${chasedResults.length} chunks`);
                 if (chasedResults.length > 0) {
-                    const existingIds = new Set(rerankedResults.map(r => r.id));
+                    const existingIds = new Set(allResults.map(r => r.id));
                     const newResults = chasedResults.filter(r => !existingIds.has(r.id));
-                    allResults = [...rerankedResults, ...newResults];
+                    allResults = [...allResults, ...newResults];
                     debugRefChasing.chasedAdded = newResults.length;
-                    context.log(`Reference chasing added ${newResults.length} new chunks`);
+                    context.log(`5b: Added ${newResults.length} chased chunks`);
                 }
-            } else {
-                context.log('Reference chasing: Nano found no missing refs');
             }
         } catch (refErr) {
             debugRefChasing.error = refErr.message;
-            context.log.error('Reference chasing failed (non-fatal):', refErr.message);
+            context.log.error('5b failed (non-fatal):', refErr.message);
         }
 
-        // Stage 6: Build context + call GPT
+        // Stage 5c: Iterative Context Evaluation (Kimi K2.5)
+        // Kimi checks if context is complete. If not, it requests more articles and drops irrelevant ones.
+        const MAX_ITERATIONS = 2;
+        let debugEval = { iterations: 0, needed: [], dropped: [], errors: [] };
+        try {
+            for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+                const evaluation = await evaluateContext(query, allResults, context);
+                debugEval.iterations = iter + 1;
+
+                if (evaluation.ready) {
+                    context.log(`5c: Kimi says READY after iteration ${iter + 1}`);
+                    break;
+                }
+
+                context.log(`5c iter ${iter + 1}: need=${evaluation.need.length}, drop=${evaluation.drop.length}`);
+
+                // Drop irrelevant sources first (by index, descending to preserve indices)
+                if (evaluation.drop.length > 0) {
+                    const dropSet = new Set(evaluation.drop);
+                    const before = allResults.length;
+                    allResults = allResults.filter((_, i) => !dropSet.has(i));
+                    const dropped = before - allResults.length;
+                    debugEval.dropped.push(...evaluation.drop);
+                    context.log(`  Dropped ${dropped} irrelevant chunks`);
+                }
+
+                // Chase additional refs requested by Kimi
+                if (evaluation.need.length > 0) {
+                    debugEval.needed.push(...evaluation.need.map(r => `Art.${r.art} ${r.ley}`));
+                    const chasedMore = await chaseReferences(evaluation.need, context);
+                    if (chasedMore.length > 0) {
+                        const existingIds = new Set(allResults.map(r => r.id));
+                        const newChased = chasedMore.filter(r => !existingIds.has(r.id));
+                        allResults = [...allResults, ...newChased];
+                        context.log(`  Added ${newChased.length} new chunks from Kimi request`);
+                    }
+                }
+
+                // If Kimi didn't need anything more but dropped some, we're done
+                if (evaluation.need.length === 0) break;
+            }
+        } catch (evalErr) {
+            debugEval.errors.push(evalErr.message);
+            context.log.error('5c eval failed (non-fatal):', evalErr.message);
+        }
+
+        // Stage 6: Build context + call GPT-5.2 (single call with clean, complete context)
         const ragContext = buildContext(allResults);
         const answer = await callGPT(ragContext, messages);
 
@@ -623,6 +755,7 @@ module.exports = async function (context, req) {
                     searchResults: searchResults.length,
                     rerankedResults: rerankedResults.length,
                     refChasing: debugRefChasing,
+                    contextEval: debugEval,
                     totalSources: allResults.length
                 }
             }
