@@ -373,6 +373,117 @@ function buildContext(results) {
     }).join('\n\n---\n\n');
 }
 
+// ── Stage 5b: Reference Chasing ──
+// Scan results for references to articles in other laws that aren't in the results.
+// Do a second targeted search to retrieve those missing referenced articles.
+function extractMissingReferences(results) {
+    // Patterns to find legal references in Spanish normative text
+    const refPatterns = [
+        // "artículo 48.4 del Estatuto de los Trabajadores" / "de la Ley del Estatuto..."
+        /art[íi]culos?\s+([\d]+(?:\.[\d]+)?(?:\s*(?:y|,|a)\s*[\d]+(?:\.[\d]+)?)*)\s+(?:del?\s+)?(?:la?\s+)?(?:(?:texto\s+refundido\s+de\s+la\s+)?Ley\s+(?:del?\s+)?)?Estatuto\s+de\s+los\s+Trabajadores/gi,
+        // "artículo 169 de la Ley General de la Seguridad Social" / "LGSS"
+        /art[íi]culos?\s+([\d]+(?:\.[\d]+)?(?:\s*(?:y|,|a)\s*[\d]+(?:\.[\d]+)?)*)\s+(?:del?\s+)?(?:la?\s+)?(?:texto\s+refundido\s+de\s+la\s+)?Ley\s+General\s+de\s+la\s+Seguridad\s+Social/gi,
+        // "artículo 48.4 ET" / "art. 48.4 del ET"
+        /art[íi]culos?\s+([\d]+(?:\.[\d]+)?)\s+(?:del?\s+)?(?:la?\s+)?(?:ET|L\.?E\.?T\.?A?)\b/gi,
+        // "artículo 267 LGSS" / "art. 267 de la LGSS"
+        /art[íi]culos?\s+([\d]+(?:\.[\d]+)?)\s+(?:del?\s+)?(?:la?\s+)?LGSS/gi,
+    ];
+
+    // Map short names to full law names as they appear in chunks
+    const lawAliases = {
+        'Estatuto de los Trabajadores': 'Texto refundido de la Ley del Estatuto de los Trabajadores',
+        'Ley General de la Seguridad Social': 'Texto refundido de la Ley General de la Seguridad Social',
+        'ET': 'Texto refundido de la Ley del Estatuto de los Trabajadores',
+        'LETA': 'Ley del Estatuto del Trabajo Autónomo',
+        'LGSS': 'Texto refundido de la Ley General de la Seguridad Social',
+    };
+
+    // Collect all referenced articles
+    const references = [];
+    for (const r of results) {
+        const text = (r.text || '') + ' ' + (r.resumen || '');
+        for (const pattern of refPatterns) {
+            pattern.lastIndex = 0;
+            let match;
+            while ((match = pattern.exec(text)) !== null) {
+                const artNum = match[1].split(/\s*[,ya]\s*/)[0].trim(); // first article number
+                const fullMatch = match[0];
+                // Determine the law name
+                let lawName = null;
+                for (const [alias, full] of Object.entries(lawAliases)) {
+                    if (fullMatch.toLowerCase().includes(alias.toLowerCase())) {
+                        lawName = full;
+                        break;
+                    }
+                }
+                if (lawName) {
+                    references.push({ artNum, lawName, query: `Artículo ${artNum} ${lawName}` });
+                }
+            }
+        }
+    }
+
+    // Deduplicate
+    const seen = new Set();
+    const unique = references.filter(ref => {
+        const key = `${ref.lawName}|${ref.artNum}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+
+    // Filter out references already in results
+    const existingArticles = new Set();
+    for (const r of results) {
+        const section = (r.section || '').toLowerCase();
+        const law = (r.law || '').toLowerCase();
+        // Extract article number from section like "Artículo 48. ..."
+        const artMatch = section.match(/art[íi]culo\s+([\d]+)/i);
+        if (artMatch) {
+            existingArticles.add(`${law}|${artMatch[1]}`);
+        }
+    }
+
+    return unique.filter(ref => {
+        const key = `${ref.lawName.toLowerCase()}|${ref.artNum.split('.')[0]}`;
+        return !existingArticles.has(key);
+    });
+}
+
+async function chaseReferences(missingRefs, context) {
+    if (!missingRefs.length) return [];
+
+    // Limit to top 3 most important references to avoid excessive API calls
+    const toChase = missingRefs.slice(0, 3);
+
+    if (context && context.log) {
+        context.log(`Reference chasing: ${toChase.length} missing refs: ${toChase.map(r => r.query).join(', ')}`);
+    }
+
+    // Build a combined query for all missing references
+    const combinedQuery = toChase.map(r => r.query).join('. ');
+
+    // Embed and search
+    const embedding = await embedQuery(combinedQuery);
+    const sparseVector = buildSparseVector(combinedQuery);
+
+    // Search only normativa collection (references are always to laws)
+    const results = await searchCollection('normativa', embedding, sparseVector, 6);
+
+    // Filter: only keep results that match one of the referenced articles
+    const matched = results.filter(r => {
+        const section = (r.section || '').toLowerCase();
+        const law = (r.law || '').toLowerCase();
+        return toChase.some(ref =>
+            law.includes(ref.lawName.toLowerCase().substring(0, 30)) &&
+            section.includes(`artículo ${ref.artNum.split('.')[0]}`)
+        );
+    });
+
+    // Mark these as reference-chased for context building
+    return matched.map(r => ({ ...r, _chased: true }));
+}
+
 // ── Stage 6b: Call GPT for final answer ──
 async function callGPT(context, messages) {
     const augmentedMessages = [
@@ -439,11 +550,25 @@ module.exports = async function (context, req) {
         const rerankedResults = await rerankResults(query, searchResults);
         context.log(`After reranking: ${rerankedResults.length} results`);
 
+        // Stage 5b: Reference Chasing — find articles referenced in results but not retrieved
+        const missingRefs = extractMissingReferences(rerankedResults);
+        let allResults = rerankedResults;
+        if (missingRefs.length > 0) {
+            const chasedResults = await chaseReferences(missingRefs, context);
+            if (chasedResults.length > 0) {
+                // Deduplicate by id
+                const existingIds = new Set(rerankedResults.map(r => r.id));
+                const newResults = chasedResults.filter(r => !existingIds.has(r.id));
+                allResults = [...rerankedResults, ...newResults];
+                context.log(`Reference chasing added ${newResults.length} chunks (from ${missingRefs.length} refs)`);
+            }
+        }
+
         // Stage 6: Build context + call GPT
-        const ragContext = buildContext(rerankedResults);
+        const ragContext = buildContext(allResults);
         const answer = await callGPT(ragContext, messages);
 
-        const sources = rerankedResults.map(r => ({
+        const sources = allResults.map(r => ({
             law: r.law || '',
             section: r.section || '',
             chapter: r.chapter || '',
