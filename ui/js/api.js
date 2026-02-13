@@ -3,6 +3,18 @@
  */
 const API = {
     /**
+     * Parse error response text, extracting clean message from JSON if possible
+     */
+    _parseErrorText(text) {
+        try {
+            const json = JSON.parse(text);
+            return json.error || json.message || text;
+        } catch {
+            return text.substring(0, 500);
+        }
+    },
+
+    /**
      * Call the chat API
      * @param {Array} messages - Conversation messages
      * @param {Object} preset - Model preset from Config
@@ -41,7 +53,7 @@ const API = {
         
         if (!response.ok) {
             const text = await response.text();
-            throw new Error(`HTTP ${response.status}: ${text.substring(0, 200)}`);
+            throw new Error(`Error ${response.status}: ${this._parseErrorText(text)}`);
         }
         
         return response.json();
@@ -71,7 +83,7 @@ const API = {
         
         if (!response.ok) {
             const text = await response.text();
-            throw new Error(`HTTP ${response.status}: ${text.substring(0, 200)}`);
+            throw new Error(`Error ${response.status}: ${this._parseErrorText(text)}`);
         }
         
         return response.json();

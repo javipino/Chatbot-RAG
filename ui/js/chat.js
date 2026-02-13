@@ -399,7 +399,7 @@ const Chat = {
             UI.focusInput();
             
         } catch (err) {
-            UI.setStatus(`Error: ${err.message.substring(0, 40)}`, 'error');
+            UI.setStatus(`Error: ${err.message.substring(0, 100)}`, 'error');
         }
     }
 };

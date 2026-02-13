@@ -9,9 +9,13 @@ const QDRANT_API_KEY = process.env.QDRANT_API_KEY;
 const READER_ENDPOINT = process.env.AZURE_OPENAI_READER_ENDPOINT || 'openai-reader-javi.cognitiveservices.azure.com';
 const READER_KEY = process.env.AZURE_OPENAI_READER_KEY;
 
+const PRINCIPAL_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT || 'javie-mku5l3k8-swedencentral.cognitiveservices.azure.com';
+const PRINCIPAL_KEY = process.env.AZURE_OPENAI_KEY;
+
 const EMBEDDING_DEPLOYMENT = 'text-embedding-3-small';
 const NANO_DEPLOYMENT = 'gpt-5-nano';
-const KIMI_DEPLOYMENT = 'Kimi-K2.5';
+const DEEPSEEK_DEPLOYMENT = 'DeepSeek-V3.2';
+const GPT52_DEPLOYMENT = 'gpt-5.2';
 
 // Colecciones y sus pesos para cross-collection search
 const COLLECTIONS = [
@@ -386,7 +390,7 @@ async function identifyMissingReferences(query, results, context) {
     try {
         const result = await httpsRequest({
             hostname: READER_ENDPOINT,
-            path: `/openai/deployments/DeepSeek-V3.2/chat/completions?api-version=2024-10-21`,
+            path: `/openai/deployments/${DEEPSEEK_DEPLOYMENT}/chat/completions?api-version=2024-10-21`,
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
         }, {
@@ -580,8 +584,8 @@ async function chaseReferences(missingRefs, context) {
     return allMatched;
 }
 
-// ── Stage 5c: Context Evaluator (Kimi K2.5) — iterative ──
-// Kimi evaluates if context is sufficient. If not, it requests more articles and drops irrelevant ones.
+// ── Stage 5c: Context Evaluator (Nano) — iterative ──
+// Nano evaluates if context is sufficient. If not, it requests more articles and drops irrelevant ones.
 // Returns: { ready: true } or { ready: false, need: [{art, ley}], drop: [indices] }
 
 async function evaluateContext(query, results, context) {
@@ -594,7 +598,7 @@ async function evaluateContext(query, results, context) {
     try {
         const result = await httpsRequest({
             hostname: READER_ENDPOINT,
-            path: `/openai/deployments/${KIMI_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
+            path: `/openai/deployments/${NANO_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
         }, {
@@ -632,13 +636,12 @@ DROP|0,3,7`
                     content: `Pregunta: ${query}\n\nFragmentos disponibles:\n${numbered}`
                 }
             ],
-            max_completion_tokens: 16384,
-            reasoning_effort: 'low'
+            max_completion_tokens: 4096
         });
 
         const msg = result.choices?.[0]?.message;
-        const content = msg?.content || msg?.reasoning_content || '';
-        if (context?.log) context.log(`Kimi eval raw: ${content.substring(0, 300)}`);
+        const content = msg?.content || '';
+        if (context?.log) context.log(`Nano eval raw: ${content.substring(0, 300)}`);
 
         if (content.includes('READY')) {
             return { ready: true, need: [], drop: [] };
@@ -665,12 +668,12 @@ DROP|0,3,7`
 
         return { ready: false, need: need.slice(0, 3), drop };
     } catch (e) {
-        if (context?.log) context.log(`Kimi eval failed: ${e.message}`);
+        if (context?.log) context.log(`Nano eval failed: ${e.message}`);
         return { ready: true, need: [], drop: [] }; // On error, proceed with what we have
     }
 }
 
-// ── Stage 6: Call Kimi K2.5 for final answer ──
+// ── Stage 6: Call GPT-5.2 for final answer (Principal endpoint, 50K TPM) ──
 async function callAnswerModel(context, messages) {
     const augmentedMessages = [
         { role: 'system', content: SYSTEM_PROMPT },
@@ -685,17 +688,17 @@ async function callAnswerModel(context, messages) {
     }
 
     const result = await httpsRequest({
-        hostname: READER_ENDPOINT,
-        path: `/openai/deployments/${KIMI_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
+        hostname: PRINCIPAL_ENDPOINT,
+        path: `/openai/deployments/${GPT52_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
+        headers: { 'Content-Type': 'application/json', 'api-key': PRINCIPAL_KEY }
     }, {
         messages: augmentedMessages,
-        max_completion_tokens: 16384
+        max_tokens: 4096
     });
 
     const msg = result.choices?.[0]?.message;
-    return msg?.content || msg?.reasoning_content || 'No se pudo generar una respuesta.';
+    return msg?.content || 'No se pudo generar una respuesta.';
 }
 
 // ── Main handler ──
@@ -719,21 +722,33 @@ module.exports = async function (context, req) {
         context.log(`RAG query: "${query.substring(0, 100)}"`);
 
         // Stage 1: Query Expansion (Nano) — context-aware with conversation history
-        const expandedQuery = await expandQuery(query, messages);
+        let expandedQuery;
+        try {
+            expandedQuery = await expandQuery(query, messages);
+        } catch (e) { e._ragStage = '1-Expand'; throw e; }
         context.log(`Expanded: "${expandedQuery.substring(0, 150)}"`);
 
         // Stage 2: Embed EXPANDED query
-        const embedding = await embedQuery(expandedQuery);
+        let embedding;
+        try {
+            embedding = await embedQuery(expandedQuery);
+        } catch (e) { e._ragStage = '2-Embed'; throw e; }
 
         // Stage 3: Build sparse vector from expanded query
         const sparseVector = buildSparseVector(expandedQuery);
 
         // Stage 4: Search all collections (hybrid: dense + sparse, RRF fusion)
-        const searchResults = await searchAllCollections(embedding, sparseVector);
+        let searchResults;
+        try {
+            searchResults = await searchAllCollections(embedding, sparseVector);
+        } catch (e) { e._ragStage = '4-Search'; throw e; }
         context.log(`Search results: ${searchResults.length} from ${new Set(searchResults.map(r => r.collection)).size} collections`);
 
         // Stage 5: Rerank with Nano
-        const rerankedResults = await rerankResults(query, searchResults);
+        let rerankedResults;
+        try {
+            rerankedResults = await rerankResults(query, searchResults);
+        } catch (e) { e._ragStage = '5-Rerank'; throw e; }
         context.log(`After reranking: ${rerankedResults.length} results`);
 
         // Stage 5b: Reference Chasing (DeepSeek — cheap first pass)
@@ -758,8 +773,8 @@ module.exports = async function (context, req) {
             context.log.error('5b failed (non-fatal):', refErr.message);
         }
 
-        // Stage 5c: Iterative Context Evaluation (Kimi K2.5)
-        // Kimi checks if context is complete. If not, it requests more articles and drops irrelevant ones.
+        // Stage 5c: Iterative Context Evaluation (Nano — 100K TPM)
+        // Nano checks if context is complete. If not, it requests more articles and drops irrelevant ones.
         const MAX_ITERATIONS = 2;
         let debugEval = { iterations: 0, needed: [], dropped: [], errors: [] };
         try {
@@ -768,7 +783,7 @@ module.exports = async function (context, req) {
                 debugEval.iterations = iter + 1;
 
                 if (evaluation.ready) {
-                    context.log(`5c: Kimi says READY after iteration ${iter + 1}`);
+                    context.log(`5c: Nano says READY after iteration ${iter + 1}`);
                     break;
                 }
 
@@ -784,7 +799,7 @@ module.exports = async function (context, req) {
                     context.log(`  Dropped ${dropped} irrelevant chunks`);
                 }
 
-                // Chase additional refs requested by Kimi
+                // Chase additional refs requested by evaluator
                 if (evaluation.need.length > 0) {
                     debugEval.needed.push(...evaluation.need.map(r => `Art.${r.art} ${r.ley}`));
                     const chasedMore = await chaseReferences(evaluation.need, context);
@@ -792,11 +807,11 @@ module.exports = async function (context, req) {
                         const existingIds = new Set(allResults.map(r => r.id));
                         const newChased = chasedMore.filter(r => !existingIds.has(r.id));
                         allResults = [...allResults, ...newChased];
-                        context.log(`  Added ${newChased.length} new chunks from Kimi request`);
+                        context.log(`  Added ${newChased.length} new chunks from eval request`);
                     }
                 }
 
-                // If Kimi didn't need anything more but dropped some, we're done
+                // If evaluator didn't need anything more but dropped some, we're done
                 if (evaluation.need.length === 0) break;
             }
         } catch (evalErr) {
@@ -804,9 +819,12 @@ module.exports = async function (context, req) {
             context.log.error('5c eval failed (non-fatal):', evalErr.message);
         }
 
-        // Stage 6: Build context + call Kimi K2.5 (single call with clean, complete context)
+        // Stage 6: Build context + call GPT-5.2 (Principal endpoint, 50K TPM)
         const ragContext = buildContext(allResults);
-        const answer = await callAnswerModel(ragContext, messages);
+        let answer;
+        try {
+            answer = await callAnswerModel(ragContext, messages);
+        } catch (e) { e._ragStage = '6-Answer(GPT-5.2)'; throw e; }
 
         const sources = allResults.map(r => ({
             law: r.law || '',
@@ -836,11 +854,13 @@ module.exports = async function (context, req) {
         };
 
     } catch (err) {
-        context.log.error('RAG error:', err.message);
+        const stage = err._ragStage || 'unknown';
+        const detail = err.message || String(err);
+        context.log.error(`RAG error [Stage ${stage}]:`, detail);
         context.res = {
             status: 500,
             headers: { 'Content-Type': 'application/json' },
-            body: { error: err.message }
+            body: { error: `[Stage ${stage}] ${detail}` }
         };
     }
 };
