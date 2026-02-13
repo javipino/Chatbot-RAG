@@ -460,28 +460,83 @@ async function chaseReferences(missingRefs, context) {
         context.log(`Reference chasing: ${toChase.length} missing refs: ${toChase.map(r => r.query).join(', ')}`);
     }
 
-    // Build a combined query for all missing references
-    const combinedQuery = toChase.map(r => r.query).join('. ');
+    // Strategy A: Use Qdrant scroll + payload filter (deterministic, most reliable)
+    // Try to find each referenced article by filtering on law + section fields
+    const qdrantUrl = new URL(QDRANT_URL);
+    let allMatched = [];
 
-    // Embed and search
-    const embedding = await embedQuery(combinedQuery);
-    const sparseVector = buildSparseVector(combinedQuery);
+    for (const ref of toChase) {
+        try {
+            // Scroll with filter: section must contain "Artículo {num}" and law must match
+            const artBase = ref.artNum.split('.')[0];
+            // Extract key words from lawName for text filter (e.g., "Estatuto Trabajadores")
+            const lawWords = ref.lawName.replace(/Texto refundido de la Ley del?/gi, '').trim()
+                .split(/\s+/).filter(w => w.length > 3).slice(0, 2).join(' ');
 
-    // Search only normativa collection (references are always to laws)
-    const results = await searchCollection('normativa', embedding, sparseVector, 6);
+            const scrollResult = await httpsRequest({
+                hostname: qdrantUrl.hostname,
+                port: qdrantUrl.port || 6333,
+                path: '/collections/normativa/points/scroll',
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY }
+            }, {
+                limit: 5,
+                with_payload: true,
+                filter: {
+                    must: [
+                        { key: 'section', match: { text: `Artículo ${artBase}` } },
+                        { key: 'law', match: { text: lawWords } }
+                    ]
+                }
+            });
 
-    // Filter: only keep results that match one of the referenced articles
-    const matched = results.filter(r => {
-        const section = (r.section || '').toLowerCase();
-        const law = (r.law || '').toLowerCase();
-        return toChase.some(ref =>
-            law.includes(ref.lawName.toLowerCase().substring(0, 30)) &&
-            section.includes(`artículo ${ref.artNum.split('.')[0]}`)
-        );
-    });
+            const scrollPoints = (scrollResult.result?.points || []).map(p => ({
+                ...p.payload,
+                score: 1.0,
+                collection: 'normativa',
+                id: p.id
+            }));
+
+            if (context && context.log) {
+                context.log(`  Scroll for Art.${artBase} (law: ${lawWords}): ${scrollPoints.length} results`);
+            }
+            allMatched.push(...scrollPoints);
+        } catch (scrollErr) {
+            if (context && context.log) {
+                context.log(`  Scroll failed for ${ref.query}: ${scrollErr.message}`);
+            }
+        }
+    }
+
+    // Strategy B fallback: if scroll found nothing, try embedding search
+    if (allMatched.length === 0) {
+        try {
+            const combinedQuery = toChase.map(r => r.query).join('. ');
+            const embedding = await embedQuery(combinedQuery);
+            const sparseVector = buildSparseVector(combinedQuery);
+            const results = await searchCollection('normativa', embedding, sparseVector, 6);
+
+            allMatched = results.filter(r => {
+                const section = (r.section || '').toLowerCase();
+                const law = (r.law || '').toLowerCase();
+                return toChase.some(ref =>
+                    law.includes(ref.lawName.toLowerCase().substring(0, 30)) &&
+                    section.includes(`artículo ${ref.artNum.split('.')[0]}`)
+                );
+            });
+
+            if (context && context.log) {
+                context.log(`  Embedding fallback: ${results.length} raw → ${allMatched.length} filtered`);
+            }
+        } catch (embErr) {
+            if (context && context.log) {
+                context.log(`  Embedding fallback failed: ${embErr.message}`);
+            }
+        }
+    }
 
     // Mark these as reference-chased for context building
-    return matched.map(r => ({ ...r, _chased: true }));
+    return allMatched.map(r => ({ ...r, _chased: true }));
 }
 
 // ── Stage 6b: Call GPT for final answer ──
@@ -551,17 +606,30 @@ module.exports = async function (context, req) {
         context.log(`After reranking: ${rerankedResults.length} results`);
 
         // Stage 5b: Reference Chasing — find articles referenced in results but not retrieved
-        const missingRefs = extractMissingReferences(rerankedResults);
         let allResults = rerankedResults;
-        if (missingRefs.length > 0) {
-            const chasedResults = await chaseReferences(missingRefs, context);
-            if (chasedResults.length > 0) {
-                // Deduplicate by id
-                const existingIds = new Set(rerankedResults.map(r => r.id));
-                const newResults = chasedResults.filter(r => !existingIds.has(r.id));
-                allResults = [...rerankedResults, ...newResults];
-                context.log(`Reference chasing added ${newResults.length} chunks (from ${missingRefs.length} refs)`);
+        let debugRefChasing = { missingRefs: [], chasedAdded: 0, error: null };
+        try {
+            const missingRefs = extractMissingReferences(rerankedResults);
+            debugRefChasing.missingRefs = missingRefs.map(r => r.query);
+            if (missingRefs.length > 0) {
+                context.log(`Reference chasing: found ${missingRefs.length} missing refs: ${missingRefs.map(r => r.query).join(', ')}`);
+                const chasedResults = await chaseReferences(missingRefs, context);
+                context.log(`Reference chasing: got ${chasedResults.length} results from chase`);
+                if (chasedResults.length > 0) {
+                    // Deduplicate by id
+                    const existingIds = new Set(rerankedResults.map(r => r.id));
+                    const newResults = chasedResults.filter(r => !existingIds.has(r.id));
+                    allResults = [...rerankedResults, ...newResults];
+                    debugRefChasing.chasedAdded = newResults.length;
+                    context.log(`Reference chasing added ${newResults.length} chunks`);
+                }
+            } else {
+                context.log('Reference chasing: no missing refs found in results');
             }
+        } catch (refErr) {
+            debugRefChasing.error = refErr.message;
+            context.log.error('Reference chasing failed (non-fatal):', refErr.message);
+            // Continue with original results
         }
 
         // Stage 6: Build context + call GPT
@@ -572,7 +640,8 @@ module.exports = async function (context, req) {
             law: r.law || '',
             section: r.section || '',
             chapter: r.chapter || '',
-            collection: r.collection
+            collection: r.collection,
+            _chased: r._chased || false
         }));
 
         context.res = {
@@ -582,7 +651,14 @@ module.exports = async function (context, req) {
                 choices: [{
                     message: { role: 'assistant', content: answer }
                 }],
-                sources
+                sources,
+                _debug: {
+                    expandedQuery: expandedQuery.substring(0, 200),
+                    searchResults: searchResults.length,
+                    rerankedResults: rerankedResults.length,
+                    refChasing: debugRefChasing,
+                    totalSources: allResults.length
+                }
             }
         };
 
