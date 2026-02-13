@@ -374,8 +374,8 @@ function buildContext(results) {
 }
 
 // ── Stage 5b: Reference Chasing (LLM-based) ──
-// Use Nano to analyze results and identify missing legal articles that should be retrieved.
-// More robust than regex: catches implicit references and uses pre-trained legal knowledge.
+// Use DeepSeek-V3.2 to analyze results and identify missing legal articles that should be retrieved.
+// Non-reasoning model: efficient tokens, clean output, no reasoning overhead.
 async function identifyMissingReferences(query, results, context) {
     // Build a summary of what we already have
     const sourceSummary = results.map((r, i) =>
@@ -389,7 +389,7 @@ async function identifyMissingReferences(query, results, context) {
     try {
         const result = await httpsRequest({
             hostname: READER_ENDPOINT,
-            path: `/openai/deployments/${NANO_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
+            path: `/openai/deployments/DeepSeek-V3.2/chat/completions?api-version=2024-10-21`,
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
         }, {
@@ -408,12 +408,11 @@ Máximo 3 líneas. Si no falta nada, responde: NINGUNO`
                     content: `Pregunta: ${query}\n\nFragmentos disponibles:\n${sourceSummary}\n\nTexto:\n${textSnippets}\n\nArtículos que FALTAN:`
                 }
             ],
-            max_completion_tokens: 2048,
-            reasoning_effort: 'low'
+            max_tokens: 200
         });
 
         const content = result.choices?.[0]?.message?.content || '';
-        if (context?.log) context.log(`Nano ref analysis raw: ${content.substring(0, 300)}`);
+        if (context?.log) context.log(`DeepSeek ref analysis raw: ${content.substring(0, 300)}`);
 
         if (content.includes('NINGUNO') || !content.trim()) return [];
 
@@ -438,7 +437,7 @@ Máximo 3 líneas. Si no falta nada, responde: NINGUNO`
             }
         }
 
-        // Fallback: try JSON format if Nano produced it
+        // Fallback: try JSON format if model produced it
         if (refs.length === 0) {
             const jsonMatch = content.match(/\[[\s\S]*\]/);
             if (jsonMatch) {
@@ -451,7 +450,7 @@ Máximo 3 líneas. Si no falta nada, responde: NINGUNO`
 
         return refs.slice(0, 3);
     } catch (e) {
-        if (context?.log) context.log(`Nano ref analysis failed: ${e.message}`);
+        if (context?.log) context.log(`DeepSeek ref analysis failed: ${e.message}`);
     }
     return [];
 }
@@ -479,7 +478,7 @@ async function chaseReferences(missingRefs, context) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY }
             }, {
-                limit: 3,
+                limit: 5,
                 with_payload: true,
                 filter: {
                     must: [
