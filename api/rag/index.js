@@ -632,11 +632,12 @@ DROP|0,3,7`
                     content: `Pregunta: ${query}\n\nFragmentos disponibles:\n${numbered}`
                 }
             ],
-            max_completion_tokens: 2048,
+            max_completion_tokens: 16384,
             reasoning_effort: 'low'
         });
 
-        const content = result.choices?.[0]?.message?.content || '';
+        const msg = result.choices?.[0]?.message;
+        const content = msg?.content || msg?.reasoning_content || '';
         if (context?.log) context.log(`Kimi eval raw: ${content.substring(0, 300)}`);
 
         if (content.includes('READY')) {
@@ -690,10 +691,11 @@ async function callAnswerModel(context, messages) {
         headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
     }, {
         messages: augmentedMessages,
-        max_completion_tokens: 4096
+        max_completion_tokens: 16384
     });
 
-    return result.choices?.[0]?.message?.content || 'No se pudo generar una respuesta.';
+    const msg = result.choices?.[0]?.message;
+    return msg?.content || msg?.reasoning_content || 'No se pudo generar una respuesta.';
 }
 
 // ── Main handler ──
