@@ -714,6 +714,9 @@ Reglas para DROP:
 - Separados por comas en UNA sola línea
 - Si todos son relevantes, no incluyas línea DROP
 
+Regla especial:
+- Si la pregunta involucra derechos del trabajador, asegura que tienes los artículos base del Estatuto de los Trabajadores (ET). Si no los ves en los fragmentos, pídelos con NEED.
+
 Ejemplo de respuesta B:
 NEED|48|Estatuto Trabajadores
 NEED|177|LGSS
@@ -724,7 +727,7 @@ DROP|0,3,7`
                     content: `Pregunta: ${query}\n\nFragmentos disponibles:\n${numbered}`
                 }
             ],
-            max_tokens: 500
+            max_completion_tokens: 500
         });
 
         const msg = result.choices?.[0]?.message;
@@ -782,7 +785,7 @@ async function callAnswerModel(context, messages) {
         headers: { 'Content-Type': 'application/json', 'api-key': PRINCIPAL_KEY }
     }, {
         messages: augmentedMessages,
-        max_tokens: 4096
+        max_completion_tokens: 4096
     });
 
     const msg = result.choices?.[0]?.message;
