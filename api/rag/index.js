@@ -25,10 +25,11 @@ const COLLECTIONS = [
 
 const SYSTEM_PROMPT = `Eres un experto en legislación laboral y de Seguridad Social española.
 Respondes preguntas basándote EXCLUSIVAMENTE en los fragmentos de normativa que se te proporcionan como contexto.
+NO uses tu conocimiento preentrenado para responder. Solo puedes citar lo que aparece en los fragmentos.
 
 Reglas:
 - Cita siempre la ley, capítulo y artículo específico en tu respuesta.
-- Si el contexto proporcionado no contiene información suficiente para responder, dilo claramente.
+- Si el contexto proporcionado no contiene información suficiente para responder, dilo claramente. NO inventes ni completes con conocimiento propio.
 - Responde en español, de forma clara y estructurada.
 - Si hay varias normas relevantes, menciona todas.
 - Usa un tono profesional pero accesible.
@@ -226,8 +227,7 @@ Reglas:
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
         }, {
-            messages: nanoMessages,
-            max_completion_tokens: 4096
+            messages: nanoMessages
         });
         return result.choices?.[0]?.message?.content || query;
     } catch (e) {
@@ -344,8 +344,7 @@ Criterios de prioridad:
                     role: 'user',
                     content: `Pregunta: ${query}\n\nFragmentos:\n${fragmentsText}`
                 }
-            ],
-            max_completion_tokens: 4096
+            ]
         });
 
         const content = result.choices?.[0]?.message?.content || '';
@@ -497,7 +496,6 @@ Máximo 3 líneas. Si no falta nada, responde: NINGUNO`
                     content: `Pregunta: ${query}\n\nFragmentos disponibles:\n${sourceSummary}\n\nTexto:\n${textSnippets}\n\nArtículos que FALTAN:`
                 }
             ],
-            max_tokens: 200
         });
 
         const content = result.choices?.[0]?.message?.content || '';
@@ -695,6 +693,8 @@ async function evaluateContext(query, results, context) {
                     role: 'system',
                     content: `Eres un evaluador de contexto legal. Tu tarea es decidir si los fragmentos proporcionados son SUFICIENTES para responder la pregunta del usuario sobre legislación laboral española.
 
+IMPORTANTE: Puedes usar tu conocimiento preentrenado para IDENTIFICAR qué artículos o leyes faltan (líneas NEED), pero NO para evaluar si el contenido de los fragmentos es correcto o completo — solo evalúa lo que ves en el texto proporcionado.
+
 RESPONDE con EXACTAMENTE uno de estos formatos:
 
 OPCIÓN A — Si el contexto es SUFICIENTE para responder:
@@ -726,8 +726,7 @@ DROP|0,3,7`
                     role: 'user',
                     content: `Pregunta: ${query}\n\nFragmentos disponibles:\n${numbered}`
                 }
-            ],
-            max_completion_tokens: 500
+            ]
         });
 
         const msg = result.choices?.[0]?.message;
@@ -784,8 +783,7 @@ async function callAnswerModel(context, messages) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'api-key': PRINCIPAL_KEY }
     }, {
-        messages: augmentedMessages,
-        max_completion_tokens: 4096
+        messages: augmentedMessages
     });
 
     const msg = result.choices?.[0]?.message;
