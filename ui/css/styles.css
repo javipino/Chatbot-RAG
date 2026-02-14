@@ -501,7 +501,8 @@ body {
     background: #252526;
     border: 1px solid #0078d4;
     padding: 12px;
-    max-width: 75%;
+    max-width: 95%;
+    width: 95%;
     border-radius: 12px;
 }
 
