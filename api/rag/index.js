@@ -374,7 +374,89 @@ function buildContext(results) {
     }).join('\n\n---\n\n');
 }
 
-// ── Stage 5b: Reference Chasing (LLM-based) ──
+// ── Stage 5b: Fetch referenced chunks by ID from Qdrant ──
+async function fetchChunksByIds(ids, context) {
+    if (!ids.length) return [];
+    const qdrantUrl = new URL(QDRANT_URL);
+
+    try {
+        const result = await httpsRequest({
+            hostname: qdrantUrl.hostname,
+            port: qdrantUrl.port || 6333,
+            path: '/collections/normativa/points',
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY }
+        }, {
+            ids: ids,
+            with_payload: true,
+            with_vector: false
+        });
+
+        const points = result.result || [];
+        return points.map(p => ({
+            ...p.payload,
+            score: 0.5, // Lower score than search results
+            collection: 'normativa',
+            id: p.id,
+            _chased: true,
+            _reason: 'Pre-computed reference'
+        }));
+    } catch (err) {
+        if (context?.log) context.log(`fetchChunksByIds failed: ${err.message}`);
+        return [];
+    }
+}
+
+// ── Fetch chunks by article number + law filter (no LLM, no embedding) ──
+async function fetchByArticleFilter(refs, context) {
+    const qdrantUrl = new URL(QDRANT_URL);
+    const allMatched = [];
+
+    for (const ref of refs) {
+        try {
+            const artBase = ref.art.split('.')[0];
+            const lawWords = ref.ley.replace(/Texto refundido de la Ley del?/gi, '').trim()
+                .split(/\s+/).filter(w => w.length > 3).slice(0, 2).join(' ');
+
+            const result = await httpsRequest({
+                hostname: qdrantUrl.hostname,
+                port: qdrantUrl.port || 6333,
+                path: '/collections/normativa/points/scroll',
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY }
+            }, {
+                limit: 5,
+                with_payload: true,
+                filter: {
+                    must: [
+                        { key: 'section', match: { text: `Artículo ${artBase}` } },
+                        { key: 'law', match: { text: lawWords } }
+                    ]
+                }
+            });
+
+            const points = result.result?.points || [];
+            if (context?.log) context.log(`  Filter found ${points.length} chunks for Art.${artBase} (${lawWords})`);
+
+            for (const p of points) {
+                allMatched.push({
+                    ...p.payload,
+                    score: 0.5,
+                    collection: 'normativa',
+                    id: p.id,
+                    _chased: true,
+                    _reason: `Eval requested: Art.${ref.art} ${ref.ley}`
+                });
+            }
+        } catch (err) {
+            if (context?.log) context.log(`  Filter chase failed for Art.${ref.art}: ${err.message}`);
+        }
+    }
+
+    return allMatched;
+}
+
+// ── Legacy Stage 5b functions (kept for reference, no longer called) ──
 // Use DeepSeek-V3.2 to analyze results and identify missing legal articles that should be retrieved.
 // Non-reasoning model: efficient tokens, clean output, no reasoning overhead.
 async function identifyMissingReferences(query, results, context) {
@@ -751,22 +833,35 @@ module.exports = async function (context, req) {
         } catch (e) { e._ragStage = '5-Rerank'; throw e; }
         context.log(`After reranking: ${rerankedResults.length} results`);
 
-        // Stage 5b: Reference Chasing (DeepSeek — cheap first pass)
+        // Stage 5b: Pre-computed Reference Expansion (no LLM needed)
+        // Each chunk has a `refs` array of chunk indices it references.
+        // Collect all referenced chunks from the reranked results and fetch from Qdrant by ID.
         let allResults = [...rerankedResults];
-        let debugRefChasing = { missingRefs: [], chasedAdded: 0, error: null };
+        let debugRefChasing = { refsFound: 0, chasedAdded: 0, error: null };
         try {
-            const missingRefs = await identifyMissingReferences(query, rerankedResults, context);
-            debugRefChasing.missingRefs = missingRefs.map(r => `Art.${r.art} ${r.ley}`);
-            if (missingRefs.length > 0) {
-                context.log(`5b: DeepSeek identified ${missingRefs.length} missing: ${missingRefs.map(r => `Art.${r.art} ${r.ley}`).join(', ')}`);
-                const chasedResults = await chaseReferences(missingRefs, context);
-                if (chasedResults.length > 0) {
-                    const existingIds = new Set(allResults.map(r => r.id));
-                    const newResults = chasedResults.filter(r => !existingIds.has(r.id));
-                    allResults = [...allResults, ...newResults];
-                    debugRefChasing.chasedAdded = newResults.length;
-                    context.log(`5b: Added ${newResults.length} chased chunks`);
+            const existingIds = new Set(allResults.map(r => r.id));
+            const neededIds = new Set();
+
+            for (const r of rerankedResults) {
+                const refs = r.refs || [];
+                for (const refId of refs) {
+                    if (!existingIds.has(refId) && !neededIds.has(refId)) {
+                        neededIds.add(refId);
+                    }
                 }
+            }
+
+            debugRefChasing.refsFound = neededIds.size;
+
+            if (neededIds.size > 0) {
+                context.log(`5b: ${neededIds.size} referenced chunks to fetch`);
+                const fetched = await fetchChunksByIds([...neededIds], context);
+                const newResults = fetched.filter(r => !existingIds.has(r.id));
+                allResults = [...allResults, ...newResults];
+                debugRefChasing.chasedAdded = newResults.length;
+                context.log(`5b: Added ${newResults.length} referenced chunks`);
+            } else {
+                context.log('5b: No additional references needed');
             }
         } catch (refErr) {
             debugRefChasing.error = refErr.message;
@@ -799,10 +894,10 @@ module.exports = async function (context, req) {
                     context.log(`  Dropped ${dropped} irrelevant chunks`);
                 }
 
-                // Chase additional refs requested by evaluator
+                // Chase additional refs requested by evaluator (simple filter, no LLM)
                 if (evaluation.need.length > 0) {
                     debugEval.needed.push(...evaluation.need.map(r => `Art.${r.art} ${r.ley}`));
-                    const chasedMore = await chaseReferences(evaluation.need, context);
+                    const chasedMore = await fetchByArticleFilter(evaluation.need, context);
                     if (chasedMore.length > 0) {
                         const existingIds = new Set(allResults.map(r => r.id));
                         const newChased = chasedMore.filter(r => !existingIds.has(r.id));

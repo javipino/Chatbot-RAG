@@ -241,6 +241,7 @@ async function main() {
                     text: chunk.text || '',
                     resumen: chunk.resumen || '',
                     palabras_clave: chunk.palabras_clave || [],
+                    refs: chunk.refs || [],
                 },
             }));
 
