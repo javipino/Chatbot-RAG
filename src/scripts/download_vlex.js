@@ -28,6 +28,8 @@ const SEARCH_URL = 'https://app.vlex.com/search.json';
 const DOC_URL = (id) => `https://app.vlex.com/vid/${id}/download`;
 
 // Filtros de búsqueda (ya configurados en vLex)
+// Batch 1 (676): aplica_ley CITA_LEY_655797601 (LGSS) — ya descargado
+// Batch 2 (2200): aplica_ley CITA_LEY_586712663,CITA_LEY_327059213 (ET + otra)
 const SEARCH_PARAMS = {
     q: 'Tribunal Supremo, sala cuarta, (Social) STS',
     jurisdiction: 'ES',
@@ -37,7 +39,7 @@ const SEARCH_PARAMS = {
     'date': '2016-04-01..',
     tipo_recurso2: '05',
     sentido_fallo: '06,07',
-    aplica_ley: 'CITA_LEY_655797601',
+    aplica_ley: 'CITA_LEY_586712663,CITA_LEY_327059213',
     sort: 'by_date',
 };
 
