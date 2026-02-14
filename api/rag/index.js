@@ -176,29 +176,41 @@ function httpsRequest(options, body) {
     });
 }
 
-// ── Stage 1: Query Expansion with Nano (context-aware) ──
+// ── Stage 1: Query Expansion with Nano (context-aware, multi-query) ──
+// Returns an array of search queries. For simple questions: 1 query.
+// For complex questions involving multiple concepts: multiple queries.
 async function expandQuery(query, conversationHistory) {
     try {
         // Build conversation context for Nano so it understands follow-up questions
         const nanoMessages = [
             {
                 role: 'system',
-                content: `Eres un asistente legal. Tu tarea es reformular la pregunta del usuario para buscar en una base de datos de normativa laboral y de Seguridad Social española.
+                content: `Eres un asistente legal. Tu tarea es descomponer la pregunta del usuario en las BÚSQUEDAS NECESARIAS para encontrar toda la normativa relevante en una base de datos de legislación laboral y de Seguridad Social española.
+
+RESPONDE SOLO con un JSON array de strings. Cada string es una búsqueda independiente.
 
 Reglas:
-- Si la pregunta es clara por sí sola, expándela con sinónimos legales y artículos relevantes.
-- Si la pregunta es una continuación de la conversación (ej: "¿y si no me las dan?"), usa el historial para entender el tema y genera una query completa y autocontenida.
-- Responde SOLO con la query expandida, sin explicaciones.
-- Incluye términos técnicos del derecho laboral español.
-- IMPORTANTE: Traduce siempre los términos coloquiales a sus equivalentes legales:
-  * "baja de maternidad/paternidad" → "suspensión del contrato por nacimiento y cuidado de menor, artículo 48 Estatuto de los Trabajadores, prestación por nacimiento"
+- Si la pregunta es SIMPLE (un solo concepto), devuelve UN array con una sola query expandida.
+  Ejemplo: "¿cuántos días de vacaciones tengo?" → ["vacaciones anuales retribuidas artículo 38 Estatuto de los Trabajadores derecho a vacaciones período de disfrute"]
+- Si la pregunta es COMPLEJA (compara, relaciona o involucra varios conceptos), devuelve VARIAS queries, una por cada concepto que hay que buscar por separado.
+  Ejemplo: "¿el trabajo de una empleada del hogar es pluriempleo o pluriactividad?" →
+  ["pluriempleo Seguridad Social alta simultánea mismo régimen artículo 148 LGSS cotización",
+   "pluriactividad Seguridad Social alta simultánea distintos regímenes artículo 149 LGSS",
+   "régimen especial empleadas del hogar Sistema Especial trabajadores del hogar artículo 250-251 LGSS"]
+- Si la pregunta es una CONTINUACIÓN de la conversación (ej: "¿y si no me las dan?"), usa el historial para entender el tema y genera queries completas y autocontenidas.
+- Máximo 4 queries. Si la pregunta necesita más, agrupa los conceptos más cercanos.
+- Cada query debe ser autocontenida (no depender de las otras).
+- Incluye siempre términos técnicos legales Y los coloquiales.
+- Traduce los términos coloquiales a sus equivalentes legales:
+  * "baja de maternidad/paternidad" → "suspensión del contrato por nacimiento y cuidado de menor, artículo 48 ET"
   * "despido" → "extinción del contrato de trabajo, despido objetivo, disciplinario, artículo 49-56 ET"
   * "paro" → "prestación por desempleo, artículo 262-267 LGSS"
   * "baja médica" → "incapacidad temporal, artículo 169-176 LGSS"
   * "pensión" → "prestación contributiva de jubilación, artículo 204-215 LGSS"
   * "contrato temporal" → "contrato de duración determinada, artículo 15 ET"
   * "finiquito" → "liquidación de haberes, extinción del contrato"
-- Incluye siempre las dos versiones: el término coloquial Y el término legal formal.`
+
+RESPONDE SOLO con el JSON array. Sin explicaciones, sin markdown, sin backticks.`
             }
         ];
 
@@ -229,10 +241,28 @@ Reglas:
         }, {
             messages: nanoMessages
         });
-        return result.choices?.[0]?.message?.content || query;
+
+        const content = result.choices?.[0]?.message?.content || '';
+
+        // Parse JSON array from response (handle markdown backticks if model adds them)
+        const cleaned = content.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+        const match = cleaned.match(/\[[\s\S]*\]/);
+        if (match) {
+            const queries = JSON.parse(match[0]);
+            if (Array.isArray(queries) && queries.length > 0 && queries.every(q => typeof q === 'string')) {
+                return queries.slice(0, 4); // Cap at 4 queries max
+            }
+        }
+
+        // Fallback: if model returned plain text instead of JSON, use it as single query
+        if (content.trim().length > 0) {
+            return [content.trim()];
+        }
+
+        return [query];
     } catch (e) {
         console.warn('Query expansion failed, using original:', e.message);
-        return query;
+        return [query];
     }
 }
 
@@ -412,7 +442,8 @@ async function fetchChunksByIds(ids, context) {
     }
 }
 
-// ── Fetch chunks by article number + law filter (no LLM, no embedding) ──
+// ── Fetch chunks by article reference (filter + semantic fallback + sparse) ──
+// Strategy: 1) exact metadata filter, 2) semantic search fallback, 3) merge & dedup
 async function fetchByArticleFilter(refs, context) {
     const qdrantUrl = new URL(QDRANT_URL);
     const allMatched = [];
@@ -422,31 +453,89 @@ async function fetchByArticleFilter(refs, context) {
             const artBase = ref.art.split('.')[0];
             const lawWords = ref.ley.replace(/Texto refundido de la Ley del?/gi, '').trim()
                 .split(/\s+/).filter(w => w.length > 3).slice(0, 2).join(' ');
+            const searchQuery = `Artículo ${ref.art} ${ref.ley}`;
+            const seenIds = new Set();
+            let points = [];
 
-            const result = await httpsRequest({
-                hostname: qdrantUrl.hostname,
-                port: qdrantUrl.port || 6333,
-                path: '/collections/normativa/points/scroll',
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY }
-            }, {
-                limit: 5,
-                with_payload: true,
-                filter: {
-                    must: [
-                        { key: 'section', match: { text: `Artículo ${artBase}` } },
-                        { key: 'law', match: { text: lawWords } }
-                    ]
+            // Strategy 1: Exact metadata filter (fast, precise when metadata matches)
+            try {
+                const filterResult = await httpsRequest({
+                    hostname: qdrantUrl.hostname,
+                    port: qdrantUrl.port || 6333,
+                    path: '/collections/normativa/points/scroll',
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY }
+                }, {
+                    limit: 5,
+                    with_payload: true,
+                    filter: {
+                        must: [
+                            { key: 'section', match: { text: `Artículo ${artBase}` } },
+                            { key: 'law', match: { text: lawWords } }
+                        ]
+                    }
+                });
+                const filterPoints = filterResult.result?.points || [];
+                if (context?.log) context.log(`  Filter found ${filterPoints.length} for Art.${artBase} (${lawWords})`);
+                for (const p of filterPoints) { seenIds.add(p.id); points.push(p); }
+            } catch (filterErr) {
+                if (context?.log) context.log(`  Filter failed: ${filterErr.message}`);
+            }
+
+            // Strategy 2: Semantic search (robust — works even if metadata doesn't match)
+            // Embed "Artículo X Ley Y" and search dense + sparse with loose law filter
+            try {
+                const refEmbedding = await embedQuery(searchQuery);
+                const refSparse = buildSparseVector(searchQuery);
+
+                const prefetch = [
+                    { query: refEmbedding, using: 'text-dense', limit: 10 }
+                ];
+                if (refSparse) {
+                    prefetch.push({
+                        query: { indices: refSparse.indices, values: refSparse.values },
+                        using: 'text-sparse',
+                        limit: 10
+                    });
                 }
-            });
 
-            const points = result.result?.points || [];
-            if (context?.log) context.log(`  Filter found ${points.length} chunks for Art.${artBase} (${lawWords})`);
+                // Use loose law filter: just one keyword from law name
+                const lawKeyword = lawWords.split(' ')[0];
+                const semanticFilter = lawKeyword ? {
+                    must: [{ key: 'law', match: { text: lawKeyword } }]
+                } : undefined;
+
+                const queryBody = {
+                    limit: 5,
+                    with_payload: true,
+                    prefetch,
+                    query: { fusion: 'rrf' }
+                };
+                if (semanticFilter) queryBody.filter = semanticFilter;
+
+                const semanticResult = await httpsRequest({
+                    hostname: qdrantUrl.hostname,
+                    port: qdrantUrl.port || 6333,
+                    path: '/collections/normativa/points/query',
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'api-key': QDRANT_API_KEY }
+                }, queryBody);
+
+                const semPoints = semanticResult.result?.points || [];
+                if (context?.log) context.log(`  Semantic found ${semPoints.length} for "${searchQuery}"`);
+                for (const p of semPoints) {
+                    if (!seenIds.has(p.id)) { seenIds.add(p.id); points.push(p); }
+                }
+            } catch (semErr) {
+                if (context?.log) context.log(`  Semantic fallback failed: ${semErr.message}`);
+            }
+
+            if (context?.log) context.log(`  Total: ${points.length} chunks for Art.${artBase} ${ref.ley}`);
 
             for (const p of points) {
                 allMatched.push({
                     ...p.payload,
-                    score: 0.5,
+                    score: p.score || 0.5,
                     collection: 'normativa',
                     id: p.id,
                     _chased: true,
@@ -454,7 +543,7 @@ async function fetchByArticleFilter(refs, context) {
                 });
             }
         } catch (err) {
-            if (context?.log) context.log(`  Filter chase failed for Art.${ref.art}: ${err.message}`);
+            if (context?.log) context.log(`  Chase failed for Art.${ref.art}: ${err.message}`);
         }
     }
 
@@ -824,28 +913,55 @@ module.exports = async function (context, req) {
         const query = userMessage.content;
         context.log(`RAG query: "${query.substring(0, 100)}"`);
 
-        // Stage 1: Query Expansion (Nano) — context-aware with conversation history
-        let expandedQuery;
+        // Stage 1: Query Expansion (Nano) — returns array of search queries
+        let expandedQueries;
         try {
-            expandedQuery = await expandQuery(query, messages);
+            expandedQueries = await expandQuery(query, messages);
         } catch (e) { e._ragStage = '1-Expand'; throw e; }
-        context.log(`Expanded: "${expandedQuery.substring(0, 150)}"`);
+        context.log(`Expanded into ${expandedQueries.length} queries: ${expandedQueries.map(q => `"${q.substring(0, 80)}"`).join(', ')}`);
 
-        // Stage 2: Embed EXPANDED query
-        let embedding;
-        try {
-            embedding = await embedQuery(expandedQuery);
-        } catch (e) { e._ragStage = '2-Embed'; throw e; }
-
-        // Stage 3: Build sparse vector from expanded query
-        const sparseVector = buildSparseVector(expandedQuery);
-
-        // Stage 4: Search all collections (hybrid: dense + sparse, RRF fusion)
+        // Stages 2-4: For each expanded query → embed + sparse + search → merge
         let searchResults;
         try {
-            searchResults = await searchAllCollections(embedding, sparseVector);
-        } catch (e) { e._ragStage = '4-Search'; throw e; }
-        context.log(`Search results: ${searchResults.length} from ${new Set(searchResults.map(r => r.collection)).size} collections`);
+            const allSearchResults = [];
+            const seenIds = new Set();
+
+            // Run all queries in parallel (each does embed + sparse + search)
+            const queryPromises = expandedQueries.map(async (expandedQuery) => {
+                // Stage 2: Embed query
+                const embedding = await embedQuery(expandedQuery);
+
+                // Stage 3: Build sparse vector
+                const sparseVector = buildSparseVector(expandedQuery);
+
+                // Stage 4: Search all collections (hybrid: dense + sparse, RRF)
+                const results = await searchAllCollections(embedding, sparseVector);
+                return results;
+            });
+
+            const allResultSets = await Promise.all(queryPromises);
+
+            // Merge and deduplicate results from all queries
+            for (const resultSet of allResultSets) {
+                for (const r of resultSet) {
+                    if (!seenIds.has(r.id)) {
+                        seenIds.add(r.id);
+                        allSearchResults.push(r);
+                    } else {
+                        // If duplicate, keep the one with higher score
+                        const existingIdx = allSearchResults.findIndex(x => x.id === r.id);
+                        if (existingIdx >= 0 && r.weightedScore > allSearchResults[existingIdx].weightedScore) {
+                            allSearchResults[existingIdx] = r;
+                        }
+                    }
+                }
+            }
+
+            // Sort by weighted score and take top results for reranking
+            allSearchResults.sort((a, b) => (b.weightedScore || b.score) - (a.weightedScore || a.score));
+            searchResults = allSearchResults.slice(0, 30); // More candidates since multiple queries
+        } catch (e) { e._ragStage = '2-4-Search'; throw e; }
+        context.log(`Search results: ${searchResults.length} (from ${expandedQueries.length} queries, ${new Set(searchResults.map(r => r.collection)).size} collections)`);
 
         // Stage 5: Rerank with Nano
         let rerankedResults;
@@ -959,7 +1075,7 @@ module.exports = async function (context, req) {
                 }],
                 sources,
                 _debug: {
-                    expandedQuery: expandedQuery.substring(0, 200),
+                    expandedQueries: expandedQueries.map(q => q.substring(0, 150)),
                     searchResults: searchResults.length,
                     rerankedResults: rerankedResults.length,
                     refChasing: debugRefChasing,
