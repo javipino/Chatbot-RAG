@@ -227,7 +227,7 @@ Reglas:
             headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
         }, {
             messages: nanoMessages,
-            max_completion_tokens: 200
+            max_completion_tokens: 4096
         });
         return result.choices?.[0]?.message?.content || query;
     } catch (e) {
@@ -345,7 +345,7 @@ Criterios de prioridad:
                     content: `Pregunta: ${query}\n\nFragmentos:\n${fragmentsText}`
                 }
             ],
-            max_completion_tokens: 200
+            max_completion_tokens: 4096
         });
 
         const content = result.choices?.[0]?.message?.content || '';
