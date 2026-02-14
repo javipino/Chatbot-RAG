@@ -1,1 +1,15 @@
-{}
+{
+  "name": "chatbot-rag",
+  "version": "1.0.0",
+  "description": "RAG Chatbot - Normativa laboral y Seguridad Social",
+  "private": true,
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.22.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

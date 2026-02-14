@@ -792,6 +792,20 @@ async function callAnswerModel(context, messages) {
 
 // ── Main handler ──
 module.exports = async function (context, req) {
+    // ── Auth: validate x-api-key header ──
+    const RAG_API_KEY = process.env.RAG_API_KEY;
+    if (RAG_API_KEY) {
+        const clientKey = (req.headers || {})['x-api-key'];
+        if (!clientKey || clientKey !== RAG_API_KEY) {
+            context.res = {
+                status: 401,
+                headers: { 'Content-Type': 'application/json' },
+                body: { error: 'Invalid or missing API key' }
+            };
+            return;
+        }
+    }
+
     try {
         const body = req.body || {};
         const messages = body.messages || [];

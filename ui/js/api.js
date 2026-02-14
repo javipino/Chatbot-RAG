@@ -23,9 +23,9 @@ const API = {
      * @returns {Promise<Object>} - API response
      */
     async call(messages, preset, apiKey, systemPrompt = '') {
-        // RAG mode - uses server-side keys
+        // RAG mode - uses server-side keys, but needs RAG API key for auth
         if (preset.format === 'rag') {
-            return this._callRAG(messages);
+            return this._callRAG(messages, apiKey);
         }
         
         if (!apiKey) {
@@ -62,7 +62,11 @@ const API = {
     /**
      * Call RAG endpoint
      */
-    async _callRAG(messages) {
+    async _callRAG(messages, apiKey) {
+        if (!apiKey) {
+            throw new Error('Function Key (RAG) vacía. Ponla en la configuración.');
+        }
+
         // Extract plain text from messages
         const ragMsgs = messages
             .filter(m => m.role === 'user' || m.role === 'assistant')
@@ -77,7 +81,7 @@ const API = {
         
         const response = await fetch(Config.RAG_ENDPOINT, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
             body: JSON.stringify({ messages: ragMsgs })
         });
         

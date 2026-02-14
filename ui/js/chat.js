@@ -213,7 +213,7 @@ const Chat = {
         const preset = Config.getCurrentPreset();
         const apiKey = this.getApiKey(preset);
         
-        if (preset.provider !== 'rag' && !apiKey) {
+        if (!apiKey) {
             UI.addMessage('error', 'Abre la configuración y pon tu API key.');
             return;
         }
