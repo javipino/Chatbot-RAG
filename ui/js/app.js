@@ -145,7 +145,13 @@
         UI.elements.input.addEventListener('input', () => {
             // Auto-resize
             UI.elements.input.style.height = 'auto';
-            UI.elements.input.style.height = Math.min(UI.elements.input.scrollHeight, 180) + 'px';
+            UI.elements.input.style.height = UI.elements.input.scrollHeight + 'px';
+        });
+        
+        // Auto-resize system prompt textarea
+        UI.elements.systemPrompt.addEventListener('input', () => {
+            UI.elements.systemPrompt.style.height = 'auto';
+            UI.elements.systemPrompt.style.height = UI.elements.systemPrompt.scrollHeight + 'px';
         });
         
         UI.elements.input.addEventListener('keydown', (e) => {

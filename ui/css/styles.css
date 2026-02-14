@@ -211,8 +211,9 @@ body {
 }
 
 .cfg-group textarea {
-    resize: vertical;
+    resize: none;
     min-height: 50px;
+    overflow: hidden;
 }
 
 .cfg-group select {
@@ -514,7 +515,8 @@ body {
     border-radius: 4px;
     font-size: 14px;
     font-family: inherit;
-    resize: vertical;
+    resize: none;
+    overflow: hidden;
 }
 
 .edit-textarea:focus {
@@ -755,8 +757,8 @@ body {
     resize: none;
     font-family: inherit;
     min-height: 48px;
-    max-height: 180px;
     line-height: 1.4;
+    overflow: hidden;
     transition: border-color 0.12s, box-shadow 0.12s;
 }
 
