@@ -40,8 +40,8 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Datos grandes (opcional - descomenta si no quieres subir los chunks)
-# chunks/
+# Datos (chunks, sentencias, vocabularios, etc.)
+data/
 
 # Archivos temporales
 *.tmp
@@ -49,13 +49,6 @@ Thumbs.db
 
 # PDFs descargados
 *.pdf
-data/sentencias/
-data/sentencias_vlex/
-
-# Archivos de progreso y datos intermedios
-data/chunks/normativa_sparse_vectors.json
-data/chunks/qdrant_upload_progress.json
-data/tfidf_vocabulary.json
 
 # Scripts exploratorios/temporales
 src/scripts/_*

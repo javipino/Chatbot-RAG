@@ -14,7 +14,6 @@ const PRINCIPAL_KEY = process.env.AZURE_OPENAI_KEY;
 
 const EMBEDDING_DEPLOYMENT = 'text-embedding-3-small';
 const NANO_DEPLOYMENT = 'gpt-5-nano';
-const DEEPSEEK_DEPLOYMENT = 'DeepSeek-V3.2';
 const GPT52_DEPLOYMENT = 'gpt-5.2';
 
 // Colecciones y sus pesos para cross-collection search
@@ -44,7 +43,14 @@ Jerarquía normativa (CRÍTICO - aplica siempre):
 - Si un reglamento dice una cosa y la ley dice otra, LA LEY PREVALECE SIEMPRE.
 - Las disposiciones transitorias con fechas pasadas pueden estar derogadas implícitamente por la regulación actual.
 - Ejemplo: si el Art. 48 del Estatuto de los Trabajadores fija una duración de suspensión diferente a la que indica un reglamento de desarrollo, prevalece el Estatuto.
-- Cuando respondas, indica la fuente de mayor rango y, si detectas contradicción con otra fuente de menor rango, señálalo brevemente.`;
+- Cuando respondas, indica la fuente de mayor rango y, si detectas contradicción con otra fuente de menor rango, señálalo brevemente.
+
+Principio pro operario y norma más favorable:
+- Las normas de rango inferior solo pueden MEJORAR los derechos del trabajador respecto a las de rango superior, NUNCA restringirlos ni empeorarlos.
+- Si un convenio colectivo, reglamento o acuerdo establece condiciones PEORES que la ley, esas condiciones son NULAS por vulnerar el principio de norma mínima.
+- Si un convenio o reglamento establece condiciones MEJORES que la ley (más días de permiso, mayor indemnización, etc.), prevalece la norma más favorable al trabajador.
+- En caso de duda interpretativa sobre el alcance de una norma, aplica la interpretación más favorable al trabajador (in dubio pro operario).
+- Señala siempre cuándo una norma de desarrollo mejora los mínimos legales.`;
 
 // ── TF-IDF Vocabulary (lazy loaded) ──
 let _vocab = null;
@@ -666,8 +672,8 @@ async function chaseReferences(missingRefs, context) {
     return allMatched;
 }
 
-// ── Stage 5c: Context Evaluator (Nano) — iterative ──
-// Nano evaluates if context is sufficient. If not, it requests more articles and drops irrelevant ones.
+// ── Stage 5c: Context Evaluator (GPT-5.2) — iterative ──
+// GPT-5.2 evaluates if context is sufficient. If not, it requests more articles and drops irrelevant ones.
 // Returns: { ready: true } or { ready: false, need: [{art, ley}], drop: [indices] }
 
 async function evaluateContext(query, results, context) {
@@ -679,10 +685,10 @@ async function evaluateContext(query, results, context) {
 
     try {
         const result = await httpsRequest({
-            hostname: READER_ENDPOINT,
-            path: `/openai/deployments/${NANO_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
+            hostname: PRINCIPAL_ENDPOINT,
+            path: `/openai/deployments/${GPT52_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
             method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY }
+            headers: { 'Content-Type': 'application/json', 'api-key': PRINCIPAL_KEY }
         }, {
             messages: [
                 {
@@ -718,12 +724,12 @@ DROP|0,3,7`
                     content: `Pregunta: ${query}\n\nFragmentos disponibles:\n${numbered}`
                 }
             ],
-            max_completion_tokens: 4096
+            max_tokens: 500
         });
 
         const msg = result.choices?.[0]?.message;
         const content = msg?.content || '';
-        if (context?.log) context.log(`Nano eval raw: ${content.substring(0, 300)}`);
+        if (context?.log) context.log(`GPT-5.2 eval raw: ${content.substring(0, 300)}`);
 
         if (content.includes('READY')) {
             return { ready: true, need: [], drop: [] };
@@ -750,7 +756,7 @@ DROP|0,3,7`
 
         return { ready: false, need: need.slice(0, 3), drop };
     } catch (e) {
-        if (context?.log) context.log(`Nano eval failed: ${e.message}`);
+        if (context?.log) context.log(`GPT-5.2 eval failed: ${e.message}`);
         return { ready: true, need: [], drop: [] }; // On error, proceed with what we have
     }
 }
@@ -868,8 +874,8 @@ module.exports = async function (context, req) {
             context.log.error('5b failed (non-fatal):', refErr.message);
         }
 
-        // Stage 5c: Iterative Context Evaluation (Nano — 100K TPM)
-        // Nano checks if context is complete. If not, it requests more articles and drops irrelevant ones.
+        // Stage 5c: Iterative Context Evaluation (GPT-5.2 — Principal, 50K TPM)
+        // GPT-5.2 checks if context is complete. If not, it requests more articles and drops irrelevant ones.
         const MAX_ITERATIONS = 2;
         let debugEval = { iterations: 0, needed: [], dropped: [], errors: [] };
         try {
@@ -878,7 +884,7 @@ module.exports = async function (context, req) {
                 debugEval.iterations = iter + 1;
 
                 if (evaluation.ready) {
-                    context.log(`5c: Nano says READY after iteration ${iter + 1}`);
+                    context.log(`5c: GPT-5.2 says READY after iteration ${iter + 1}`);
                     break;
                 }
 
