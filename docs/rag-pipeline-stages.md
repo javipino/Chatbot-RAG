@@ -187,7 +187,15 @@ Los resultados se mezclan por `score × weight` y se toman los **top 20**.
 
 ## Stage 5 — Reranking (GPT-5 Nano)
 
-**Objetivo:** Reordenar los 20 resultados por relevancia real y quedarse con los top 8.
+**Objetivo:** Reordenar los 30 candidatos por relevancia real y quedarse con los más relevantes.
+
+**TopK dinámico:** `min(8 × N_queries, 16)`
+
+| Queries | TopK |
+|---------|------|
+| 1 (simple) | 8 |
+| 2 | 16 |
+| 3-4 (compleja) | 16 |
 
 **Modelo:** `gpt-5-nano` (Reader endpoint)
 

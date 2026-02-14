@@ -344,7 +344,8 @@ async function searchAllCollections(denseVector, sparseVector) {
 }
 
 // ── Stage 5: Reranker with Nano ──
-async function rerankResults(query, results) {
+// topK: dynamic based on number of queries (8 for single, up to 16 for multi)
+async function rerankResults(query, results, topK = 8) {
     if (results.length <= 3) return results;
 
     try {
@@ -364,7 +365,7 @@ async function rerankResults(query, results) {
                     content: `Evalúa la relevancia de cada fragmento para responder la pregunta del usuario.
 Devuelve SOLO un JSON array con los índices ordenados de más a menos relevante.
 Ejemplo: [3, 0, 5, 1]
-Incluye solo los fragmentos relevantes (máximo 8). Si un fragmento no es relevante, no lo incluyas.
+Incluye solo los fragmentos relevantes (máximo ${topK}). Si un fragmento no es relevante, no lo incluyas.
 Criterios de prioridad:
 - Prioriza leyes principales (Estatuto de los Trabajadores, LGSS, LETA) sobre reglamentos de desarrollo.
 - Prioriza artículos vigentes sobre disposiciones transitorias con fechas pasadas.
@@ -384,14 +385,14 @@ Criterios de prioridad:
             const reranked = rankedIndices
                 .filter(i => i >= 0 && i < results.length)
                 .map(i => results[i])
-                .slice(0, 8);
+                .slice(0, topK);
             if (reranked.length > 0) return reranked;
         }
     } catch (e) {
         console.warn('Reranking failed, using original order:', e.message);
     }
 
-    return results.slice(0, 8);
+    return results.slice(0, topK);
 }
 
 // ── Stage 6: Build context ──
@@ -963,12 +964,13 @@ module.exports = async function (context, req) {
         } catch (e) { e._ragStage = '2-4-Search'; throw e; }
         context.log(`Search results: ${searchResults.length} (from ${expandedQueries.length} queries, ${new Set(searchResults.map(r => r.collection)).size} collections)`);
 
-        // Stage 5: Rerank with Nano
+        // Stage 5: Rerank with Nano (dynamic topK based on query count)
+        const rerankTopK = Math.min(8 * expandedQueries.length, 16);
         let rerankedResults;
         try {
-            rerankedResults = await rerankResults(query, searchResults);
+            rerankedResults = await rerankResults(query, searchResults, rerankTopK);
         } catch (e) { e._ragStage = '5-Rerank'; throw e; }
-        context.log(`After reranking: ${rerankedResults.length} results`);
+        context.log(`After reranking: ${rerankedResults.length} results (topK=${rerankTopK})`);
 
         // Stage 5b: Pre-computed Reference Expansion (no LLM needed)
         // Each chunk has a `refs` array of chunk indices it references.
