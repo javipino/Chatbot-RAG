@@ -912,43 +912,66 @@ module.exports = async function (context, req) {
         }
 
         const query = userMessage.content;
-        context.log(`RAG query: "${query.substring(0, 100)}"`);
+        const LOG = (stage, msg) => context.log(`[${stage}] ${msg}`);
+        LOG('INIT', `Query: "${query.substring(0, 150)}"`);
 
         // Stage 1: Query Expansion (Nano) — returns array of search queries
         let expandedQueries;
         try {
             expandedQueries = await expandQuery(query, messages);
         } catch (e) { e._ragStage = '1-Expand'; throw e; }
-        context.log(`Expanded into ${expandedQueries.length} queries: ${expandedQueries.map(q => `"${q.substring(0, 80)}"`).join(', ')}`);
+        LOG('S1-EXPAND', `${expandedQueries.length} queries generated:`);
+        expandedQueries.forEach((q, i) => LOG('S1-EXPAND', `  [${i}] "${q}"`));
 
         // Stages 2-4: For each expanded query → embed + sparse + search → merge
         let searchResults;
+        let debugSearchDetail = [];
         try {
             const allSearchResults = [];
             const seenIds = new Set();
 
             // Run all queries in parallel (each does embed + sparse + search)
-            const queryPromises = expandedQueries.map(async (expandedQuery) => {
+            const queryPromises = expandedQueries.map(async (expandedQuery, qi) => {
                 // Stage 2: Embed query
                 const embedding = await embedQuery(expandedQuery);
+                LOG('S2-EMBED', `Query[${qi}] embedded → ${embedding.length} dims`);
 
                 // Stage 3: Build sparse vector
                 const sparseVector = buildSparseVector(expandedQuery);
+                if (sparseVector) {
+                    LOG('S3-SPARSE', `Query[${qi}] sparse → ${sparseVector.indices.length} terms`);
+                } else {
+                    LOG('S3-SPARSE', `Query[${qi}] sparse → NULL (no matching terms)`);
+                }
 
                 // Stage 4: Search all collections (hybrid: dense + sparse, RRF)
                 const results = await searchAllCollections(embedding, sparseVector);
-                return results;
+                const byCol = {};
+                results.forEach(r => { byCol[r.collection] = (byCol[r.collection] || 0) + 1; });
+                LOG('S4-SEARCH', `Query[${qi}] → ${results.length} results: ${Object.entries(byCol).map(([c, n]) => `${c}:${n}`).join(', ')}`);
+                results.forEach((r, i) => {
+                    LOG('S4-SEARCH', `  [${i}] id=${r.id} score=${(r.weightedScore || r.score || 0).toFixed(4)} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 60)}`);
+                });
+                return { queryIndex: qi, results };
             });
 
             const allResultSets = await Promise.all(queryPromises);
 
             // Merge and deduplicate results from all queries
-            for (const resultSet of allResultSets) {
+            let dupeCount = 0;
+            for (const { queryIndex, results: resultSet } of allResultSets) {
+                debugSearchDetail.push({
+                    queryIndex,
+                    query: expandedQueries[queryIndex].substring(0, 100),
+                    count: resultSet.length,
+                    topIds: resultSet.slice(0, 5).map(r => r.id)
+                });
                 for (const r of resultSet) {
                     if (!seenIds.has(r.id)) {
                         seenIds.add(r.id);
                         allSearchResults.push(r);
                     } else {
+                        dupeCount++;
                         // If duplicate, keep the one with higher score
                         const existingIdx = allSearchResults.findIndex(x => x.id === r.id);
                         if (existingIdx >= 0 && r.weightedScore > allSearchResults[existingIdx].weightedScore) {
@@ -961,8 +984,14 @@ module.exports = async function (context, req) {
             // Sort by weighted score and take top results for reranking
             allSearchResults.sort((a, b) => (b.weightedScore || b.score) - (a.weightedScore || a.score));
             searchResults = allSearchResults.slice(0, 30); // More candidates since multiple queries
+            LOG('S4-MERGE', `Total unique: ${allSearchResults.length}, dupes removed: ${dupeCount}, kept top 30: ${searchResults.length}`);
         } catch (e) { e._ragStage = '2-4-Search'; throw e; }
-        context.log(`Search results: ${searchResults.length} (from ${expandedQueries.length} queries, ${new Set(searchResults.map(r => r.collection)).size} collections)`);
+
+        // Log all 30 candidates going into reranking
+        LOG('S4→S5', `Candidates for reranking (${searchResults.length}):`);
+        searchResults.forEach((r, i) => {
+            LOG('S4→S5', `  [${i}] id=${r.id} score=${(r.weightedScore || r.score || 0).toFixed(4)} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 80)}`);
+        });
 
         // Stage 5: Rerank with Nano (dynamic topK based on query count)
         const rerankTopK = Math.min(8 * expandedQueries.length, 16);
@@ -970,7 +999,20 @@ module.exports = async function (context, req) {
         try {
             rerankedResults = await rerankResults(query, searchResults, rerankTopK);
         } catch (e) { e._ragStage = '5-Rerank'; throw e; }
-        context.log(`After reranking: ${rerankedResults.length} results (topK=${rerankTopK})`);
+        LOG('S5-RERANK', `topK=${rerankTopK} → ${rerankedResults.length} survived:`);
+        rerankedResults.forEach((r, i) => {
+            LOG('S5-RERANK', `  [${i}] id=${r.id} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 80)}`);
+        });
+
+        // Log what was DROPPED by reranking
+        const rerankedIds = new Set(rerankedResults.map(r => r.id));
+        const droppedByRerank = searchResults.filter(r => !rerankedIds.has(r.id));
+        if (droppedByRerank.length > 0) {
+            LOG('S5-RERANK', `DROPPED by rerank (${droppedByRerank.length}):`);
+            droppedByRerank.forEach(r => {
+                LOG('S5-RERANK', `  ✗ id=${r.id} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 80)}`);
+            });
+        }
 
         // Stage 5b: Pre-computed Reference Expansion (no LLM needed)
         // Each chunk has a `refs` array of chunk indices it references.
@@ -983,6 +1025,9 @@ module.exports = async function (context, req) {
 
             for (const r of rerankedResults) {
                 const refs = r.refs || [];
+                if (refs.length > 0) {
+                    LOG('S5b-REFS', `id=${r.id} (${(r.section || '?').substring(0, 40)}) refs: [${refs.join(', ')}]`);
+                }
                 for (const refId of refs) {
                     if (!existingIds.has(refId) && !neededIds.has(refId)) {
                         neededIds.add(refId);
@@ -993,55 +1038,78 @@ module.exports = async function (context, req) {
             debugRefChasing.refsFound = neededIds.size;
 
             if (neededIds.size > 0) {
-                context.log(`5b: ${neededIds.size} referenced chunks to fetch`);
+                LOG('S5b-REFS', `Fetching ${neededIds.size} referenced chunks: [${[...neededIds].join(', ')}]`);
                 const fetched = await fetchChunksByIds([...neededIds], context);
                 const newResults = fetched.filter(r => !existingIds.has(r.id));
                 allResults = [...allResults, ...newResults];
                 debugRefChasing.chasedAdded = newResults.length;
-                context.log(`5b: Added ${newResults.length} referenced chunks`);
+                LOG('S5b-REFS', `Added ${newResults.length} referenced chunks:`);
+                newResults.forEach(r => {
+                    LOG('S5b-REFS', `  + id=${r.id} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 60)}`);
+                });
             } else {
-                context.log('5b: No additional references needed');
+                LOG('S5b-REFS', 'No pre-computed references to fetch');
             }
         } catch (refErr) {
             debugRefChasing.error = refErr.message;
-            context.log.error('5b failed (non-fatal):', refErr.message);
+            LOG('S5b-REFS', `ERROR (non-fatal): ${refErr.message}`);
         }
 
         // Stage 5c: Iterative Context Evaluation (GPT-5.2 — Principal, 50K TPM)
         // GPT-5.2 checks if context is complete. If not, it requests more articles and drops irrelevant ones.
         const MAX_ITERATIONS = 2;
         let debugEval = { iterations: 0, needed: [], dropped: [], errors: [] };
+        LOG('S5c-EVAL', `Starting context evaluation (max ${MAX_ITERATIONS} iters) with ${allResults.length} chunks`);
         try {
             for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
+                LOG('S5c-EVAL', `--- Iteration ${iter + 1} ---`);
+                LOG('S5c-EVAL', `Current context (${allResults.length} chunks):`);
+                allResults.forEach((r, i) => {
+                    LOG('S5c-EVAL', `  [${i}] id=${r.id} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 60)}${r._chased ? ' [CHASED]' : ''}`);
+                });
+
                 const evaluation = await evaluateContext(query, allResults, context);
                 debugEval.iterations = iter + 1;
 
                 if (evaluation.ready) {
-                    context.log(`5c: GPT-5.2 says READY after iteration ${iter + 1}`);
+                    LOG('S5c-EVAL', `GPT-5.2 says READY ✓`);
                     break;
                 }
 
-                context.log(`5c iter ${iter + 1}: need=${evaluation.need.length}, drop=${evaluation.drop.length}`);
+                LOG('S5c-EVAL', `GPT-5.2 says NOT READY: need=${evaluation.need.length}, drop=${evaluation.drop.length}`);
 
                 // Drop irrelevant sources first (by index, descending to preserve indices)
                 if (evaluation.drop.length > 0) {
                     const dropSet = new Set(evaluation.drop);
+                    LOG('S5c-EVAL', `Dropping indices: [${evaluation.drop.join(', ')}]`);
+                    evaluation.drop.forEach(i => {
+                        if (allResults[i]) {
+                            LOG('S5c-EVAL', `  ✗ [${i}] id=${allResults[i].id} ${allResults[i].law || '?'} > ${(allResults[i].section || '?').substring(0, 60)}`);
+                        }
+                    });
                     const before = allResults.length;
                     allResults = allResults.filter((_, i) => !dropSet.has(i));
                     const dropped = before - allResults.length;
                     debugEval.dropped.push(...evaluation.drop);
-                    context.log(`  Dropped ${dropped} irrelevant chunks`);
+                    LOG('S5c-EVAL', `Dropped ${dropped} chunks (${allResults.length} remaining)`);
                 }
 
-                // Chase additional refs requested by evaluator (simple filter, no LLM)
+                // Chase additional refs requested by evaluator
                 if (evaluation.need.length > 0) {
+                    LOG('S5c-EVAL', `Fetching ${evaluation.need.length} NEED requests:`);
+                    evaluation.need.forEach(r => LOG('S5c-EVAL', `  → Art.${r.art} ${r.ley}`));
                     debugEval.needed.push(...evaluation.need.map(r => `Art.${r.art} ${r.ley}`));
                     const chasedMore = await fetchByArticleFilter(evaluation.need, context);
+                    LOG('S5c-EVAL', `fetchByArticleFilter returned ${chasedMore.length} chunks:`);
+                    chasedMore.forEach(r => {
+                        LOG('S5c-EVAL', `  id=${r.id} ${r.law || '?'} > ${(r.section || '?').substring(0, 60)} [${r._reason || ''}]`);
+                    });
                     if (chasedMore.length > 0) {
                         const existingIds = new Set(allResults.map(r => r.id));
                         const newChased = chasedMore.filter(r => !existingIds.has(r.id));
+                        const dupeChased = chasedMore.length - newChased.length;
                         allResults = [...allResults, ...newChased];
-                        context.log(`  Added ${newChased.length} new chunks from eval request`);
+                        LOG('S5c-EVAL', `Added ${newChased.length} new chunks (${dupeChased} duplicates skipped)`);
                     }
                 }
 
@@ -1050,15 +1118,21 @@ module.exports = async function (context, req) {
             }
         } catch (evalErr) {
             debugEval.errors.push(evalErr.message);
-            context.log.error('5c eval failed (non-fatal):', evalErr.message);
+            LOG('S5c-EVAL', `ERROR (non-fatal): ${evalErr.message}`);
         }
 
         // Stage 6: Build context + call GPT-5.2 (Principal endpoint, 50K TPM)
+        LOG('S6-ANSWER', `Final context: ${allResults.length} chunks`);
+        allResults.forEach((r, i) => {
+            LOG('S6-ANSWER', `  [${i}] id=${r.id} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 80)}${r._chased ? ' [CHASED]' : ''}`);
+        });
         const ragContext = buildContext(allResults);
+        LOG('S6-ANSWER', `Context size: ${ragContext.length} chars`);
         let answer;
         try {
             answer = await callAnswerModel(ragContext, messages);
         } catch (e) { e._ragStage = '6-Answer(GPT-5.2)'; throw e; }
+        LOG('S6-ANSWER', `Response length: ${answer.length} chars`);
 
         const sources = allResults.map(r => ({
             law: r.law || '',
@@ -1078,11 +1152,14 @@ module.exports = async function (context, req) {
                 sources,
                 _debug: {
                     expandedQueries: expandedQueries.map(q => q.substring(0, 150)),
+                    searchDetail: debugSearchDetail,
                     searchResults: searchResults.length,
                     rerankedResults: rerankedResults.length,
+                    droppedByRerank: droppedByRerank.map(r => ({ id: r.id, law: r.law || '', section: (r.section || '').substring(0, 60), collection: r.collection })),
                     refChasing: debugRefChasing,
                     contextEval: debugEval,
-                    totalSources: allResults.length
+                    totalSources: allResults.length,
+                    finalSources: allResults.map(r => ({ id: r.id, law: r.law || '', section: (r.section || '').substring(0, 60), collection: r.collection, chased: r._chased || false }))
                 }
             }
         };
