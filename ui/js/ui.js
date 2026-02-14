@@ -335,20 +335,109 @@ const UI = {
     formatContent(text) {
         let html = this.escapeHtml(text);
         
-        // Code blocks
-        const codeBlockRe = /```(\w*)\n([\s\S]*?)```/g;
-        html = html.replace(codeBlockRe, (_, lang, code) => {
+        // Code blocks (must be first to avoid processing inside them)
+        const codeBlocks = [];
+        html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (_, lang, code) => {
             const label = lang ? `<span class="code-lang">${lang}</span>` : '';
-            return `<pre class="code-block">${label}<button class="copy-btn" data-action="copy-code">Copiar</button><code>${code.trim()}</code></pre>`;
+            const placeholder = `%%CODEBLOCK${codeBlocks.length}%%`;
+            codeBlocks.push(`<pre class="code-block">${label}<button class="copy-btn" data-action="copy-code">Copiar</button><code>${code.trim()}</code></pre>`);
+            return placeholder;
         });
         
-        // Inline code
-        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-        
-        // Bold
-        html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-        
+        // Process line by line for block elements
+        const lines = html.split('\n');
+        const output = [];
+        let inList = false;
+        let listType = null; // 'ul' or 'ol'
+
+        for (let i = 0; i < lines.length; i++) {
+            let line = lines[i];
+
+            // Code block placeholder — pass through
+            if (line.match(/%%CODEBLOCK\d+%%/)) {
+                if (inList) { output.push(`</${listType}>`); inList = false; }
+                output.push(line);
+                continue;
+            }
+
+            // Headers
+            const headerMatch = line.match(/^(#{1,4})\s+(.+)$/);
+            if (headerMatch) {
+                if (inList) { output.push(`</${listType}>`); inList = false; }
+                const level = headerMatch[1].length;
+                output.push(`<h${level + 1}>${this._inlineFormat(headerMatch[2])}</h${level + 1}>`);
+                continue;
+            }
+
+            // Horizontal rule
+            if (line.match(/^---+$/)) {
+                if (inList) { output.push(`</${listType}>`); inList = false; }
+                output.push('<hr>');
+                continue;
+            }
+
+            // Unordered list item (- or *)
+            const ulMatch = line.match(/^(\s*)[-*]\s+(.+)$/);
+            if (ulMatch) {
+                if (!inList || listType !== 'ul') {
+                    if (inList) output.push(`</${listType}>`);
+                    output.push('<ul>');
+                    inList = true;
+                    listType = 'ul';
+                }
+                output.push(`<li>${this._inlineFormat(ulMatch[2])}</li>`);
+                continue;
+            }
+
+            // Ordered list item
+            const olMatch = line.match(/^(\s*)\d+[.)]\s+(.+)$/);
+            if (olMatch) {
+                if (!inList || listType !== 'ol') {
+                    if (inList) output.push(`</${listType}>`);
+                    output.push('<ol>');
+                    inList = true;
+                    listType = 'ol';
+                }
+                output.push(`<li>${this._inlineFormat(olMatch[2])}</li>`);
+                continue;
+            }
+
+            // Close list if we hit a non-list line
+            if (inList) {
+                output.push(`</${listType}>`);
+                inList = false;
+            }
+
+            // Empty line = paragraph break
+            if (line.trim() === '') {
+                output.push('<br>');
+                continue;
+            }
+
+            // Regular paragraph line
+            output.push(`<p>${this._inlineFormat(line)}</p>`);
+        }
+
+        if (inList) output.push(`</${listType}>`);
+
+        html = output.join('\n');
+
+        // Restore code blocks
+        for (let i = 0; i < codeBlocks.length; i++) {
+            html = html.replace(`%%CODEBLOCK${i}%%`, codeBlocks[i]);
+        }
+
         return html;
+    },
+
+    _inlineFormat(text) {
+        // Bold
+        text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        // Italic
+        text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+        // Inline code
+        text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+        return text;
     },
     
     // ==================== Save button feedback ====================
