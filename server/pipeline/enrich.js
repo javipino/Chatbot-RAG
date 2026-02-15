@@ -1,201 +1,157 @@
-// ── Stages 5b + 5c: Reference Expansion & Context Evaluation ──
+// ── Stage 5b: Reference Expansion ──
 
-const { callGPT52, embed } = require('../services/openai');
-const { buildSparseVector } = require('../services/tfidf');
-const { fetchChunksByIds, fetchByArticleFilter } = require('../services/qdrant');
+const { fetchChunksByIds } = require('../services/qdrant');
 
-const MAX_EVAL_ITERATIONS = 2;
+const MAX_REFS_PER_CHUNK = 3;
+const MAX_TOTAL_REFS = 15;       // Global cap on total reference chunks added
+const REF_SCORE_FACTOR = 0.8;    // Refs inherit parentScore × this factor
+
+// ── Law rank hierarchy for directional ref filtering ──
+// Only follow refs that point to HIGHER or EQUAL rank laws
+const LAW_RANK = {
+    'Constitución Española [parcial]': 1,
+    'Ley Orgánica de Libertad Sindical': 1,
+    // Leyes orgánicas y estatutos
+    'Texto refundido de la Ley del Estatuto de los Trabajadores': 2,
+    'Texto refundido de la Ley General de la Seguridad Social': 2,
+    'Ley del Estatuto del trabajo autónomo': 2,
+    'Texto refundido de la Ley sobre Infracciones y Sanciones en el Orden Social': 2,
+    'Ley reguladora de la jurisdicción social': 2,
+    'Ley de Prevención de Riesgos Laborales': 2,
+    'Ley de Empleo [parcial]': 2,
+    'Ley de trabajo a distancia [parcial]': 2,
+    'Ley de protección social de las personas trabajadoras del sector marítimo-pesquero': 2,
+};
+// Everything else (Reglamentos, RDs, Órdenes) defaults to rank 3+
+
+function getLawRank(lawName) {
+    if (!lawName) return 99;
+    if (LAW_RANK[lawName] !== undefined) return LAW_RANK[lawName];
+    // Classify by name patterns
+    if (/^Ley\b/i.test(lawName)) return 2;
+    if (/Reglamento General/i.test(lawName)) return 3;
+    if (/Real Decreto/i.test(lawName)) return 4;
+    return 5; // Órdenes, convenios, etc.
+}
 
 /**
- * Stage 5b: Expand pre-computed references from reranked results
- * Each chunk has a `refs` array of chunk IDs it references.
+ * Check if a ref target is a sibling (same article, different part)
+ */
+function isSibling(source, target) {
+    if (!source.section || !target.section || source.law !== target.law) return false;
+    // Extract base article number: "Artículo 308.  Cotización... (parte 2)" → "308"
+    const getArtBase = (sec) => {
+        const m = sec.match(/^Artículo\s+(\d+(?:\s*(?:bis|ter|quater|quinquies))?)/i);
+        return m ? m[1].trim().toLowerCase() : null;
+    };
+    const srcArt = getArtBase(source.section);
+    const tgtArt = getArtBase(target.section);
+    return srcArt && tgtArt && srcArt === tgtArt && source.id !== target.id;
+}
+
+/**
+ * Stage 5b: Expand pre-computed references from reranked results.
+ * Filtering rules:
+ *  1. Only follow refs pointing to HIGHER or EQUAL rank laws (upward direction)
+ *  2. Always follow sibling refs (same article, different parts)
+ *  3. Cap at MAX_REFS_PER_CHUNK per source chunk
  */
 async function expandReferences(results, log) {
     const existingIds = new Set(results.map(r => r.id));
     const neededIds = new Set();
+    const refSources = new Map(); // refId → source info for logging
 
+    // First pass: collect all ref IDs to fetch (we need payload to filter)
+    const allRefIds = new Set();
     for (const r of results) {
-        const refs = r.refs || [];
-        if (refs.length > 0) {
-            log('S5b-REFS', `id=${r.id} (${(r.section || '?').substring(0, 40)}) refs: [${refs.join(', ')}]`);
-        }
-        for (const refId of refs) {
-            if (!existingIds.has(refId) && !neededIds.has(refId)) {
-                neededIds.add(refId);
-            }
+        for (const refId of (r.refs || [])) {
+            if (!existingIds.has(refId)) allRefIds.add(refId);
         }
     }
 
-    if (neededIds.size === 0) {
+    if (allRefIds.size === 0) {
         log('S5b-REFS', 'No pre-computed references to fetch');
         return { added: [], refsFound: 0 };
     }
 
-    log('S5b-REFS', `Fetching ${neededIds.size} referenced chunks: [${[...neededIds].join(', ')}]`);
-    const fetched = await fetchChunksByIds([...neededIds]);
-    const newResults = fetched.filter(r => !existingIds.has(r.id));
+    // Fetch all candidate refs in one batch
+    log('S5b-REFS', `Fetching ${allRefIds.size} candidate refs to filter...`);
+    const fetched = await fetchChunksByIds([...allRefIds]);
+    const fetchedMap = new Map(fetched.map(f => [f.id, f]));
 
-    log('S5b-REFS', `Added ${newResults.length} referenced chunks:`);
-    newResults.forEach(r => {
-        log('S5b-REFS', `  + id=${r.id} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 60)}`);
-    });
+    // Second pass: apply directional + sibling filtering
+    for (const r of results) {
+        const refs = r.refs || [];
+        if (refs.length === 0) continue;
 
-    return { added: newResults, refsFound: neededIds.size };
-}
+        const srcRank = getLawRank(r.law);
+        let kept = [];
+        let skipped = [];
 
-/**
- * Stage 5c: Iterative context evaluation with GPT-5.2
- * Evaluates if context is sufficient; if not, requests more articles and drops irrelevant ones.
- */
-async function evaluateAndEnrich(query, allResults, log) {
-    const debugEval = { iterations: 0, needed: [], dropped: [], errors: [] };
+        for (const refId of refs) {
+            if (existingIds.has(refId) || neededIds.has(refId)) continue;
+            const target = fetchedMap.get(refId);
+            if (!target) continue;
 
-    log('S5c-EVAL', `Starting context evaluation (max ${MAX_EVAL_ITERATIONS} iters) with ${allResults.length} chunks`);
+            const tgtRank = getLawRank(target.law);
+            const isSib = isSibling(r, target);
 
-    try {
-        for (let iter = 0; iter < MAX_EVAL_ITERATIONS; iter++) {
-            log('S5c-EVAL', `--- Iteration ${iter + 1} ---`);
-            log('S5c-EVAL', `Current context (${allResults.length} chunks):`);
-            allResults.forEach((r, i) => {
-                log('S5c-EVAL', `  [${i}] id=${r.id} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 60)}${r._chased ? ' [CHASED]' : ''}`);
-            });
-
-            const evaluation = await _callEvaluator(query, allResults, log);
-            debugEval.iterations = iter + 1;
-
-            if (evaluation.ready) {
-                log('S5c-EVAL', 'GPT-5.2 says READY ✓');
-                break;
+            // Keep if: sibling OR target is higher/equal rank
+            if (isSib || tgtRank <= srcRank) {
+                kept.push({ id: refId, reason: isSib ? 'sibling' : 'upward', target });
+            } else {
+                skipped.push({ id: refId, target });
             }
-
-            log('S5c-EVAL', `GPT-5.2 says NOT READY: need=${evaluation.need.length}, drop=${evaluation.drop.length}`);
-
-            // Drop irrelevant sources
-            if (evaluation.drop.length > 0) {
-                const dropSet = new Set(evaluation.drop);
-                log('S5c-EVAL', `Dropping indices: [${evaluation.drop.join(', ')}]`);
-                evaluation.drop.forEach(i => {
-                    if (allResults[i]) {
-                        log('S5c-EVAL', `  ✗ [${i}] id=${allResults[i].id} ${allResults[i].law || '?'} > ${(allResults[i].section || '?').substring(0, 60)}`);
-                    }
-                });
-                const before = allResults.length;
-                allResults = allResults.filter((_, i) => !dropSet.has(i));
-                debugEval.dropped.push(...evaluation.drop);
-                log('S5c-EVAL', `Dropped ${before - allResults.length} chunks (${allResults.length} remaining)`);
-            }
-
-            // Fetch additional articles requested by evaluator
-            if (evaluation.need.length > 0) {
-                log('S5c-EVAL', `Fetching ${evaluation.need.length} NEED requests:`);
-                evaluation.need.forEach(r => log('S5c-EVAL', `  → Art.${r.art} ${r.ley}`));
-                debugEval.needed.push(...evaluation.need.map(r => `Art.${r.art} ${r.ley}`));
-
-                const chasedMore = await fetchByArticleFilter(evaluation.need, embed, buildSparseVector, log);
-                log('S5c-EVAL', `fetchByArticleFilter returned ${chasedMore.length} chunks:`);
-                chasedMore.forEach(r => {
-                    log('S5c-EVAL', `  id=${r.id} ${r.law || '?'} > ${(r.section || '?').substring(0, 60)} [${r._reason || ''}]`);
-                });
-
-                if (chasedMore.length > 0) {
-                    const existingIds = new Set(allResults.map(r => r.id));
-                    const newChased = chasedMore.filter(r => !existingIds.has(r.id));
-                    allResults = [...allResults, ...newChased];
-                    log('S5c-EVAL', `Added ${newChased.length} new chunks (${chasedMore.length - newChased.length} duplicates skipped)`);
-                }
-            }
-
-            if (evaluation.need.length === 0) break;
         }
-    } catch (evalErr) {
-        debugEval.errors.push(evalErr.message);
-        log('S5c-EVAL', `ERROR (non-fatal): ${evalErr.message}`);
+
+        // Cap per chunk
+        kept = kept.slice(0, MAX_REFS_PER_CHUNK);
+
+        if (kept.length > 0 || skipped.length > 0) {
+            log('S5b-REFS', `id=${r.id} (${(r.section || '?').substring(0, 40)}) → ${kept.length} kept, ${skipped.length} filtered out`);
+        }
+
+        const parentScore = r.weightedScore || r.score || 0;
+        for (const k of kept) {
+            neededIds.add(k.id);
+            const inheritedScore = parentScore * REF_SCORE_FACTOR;
+            const existing = refSources.get(k.id);
+            if (!existing || inheritedScore > existing.score) {
+                refSources.set(k.id, { reason: k.reason, score: inheritedScore });
+            }
+        }
     }
 
-    return { results: allResults, debugEval };
-}
+    // Collect the filtered results, assign inherited scores
+    let newResults = [...neededIds]
+        .map(id => {
+            const chunk = fetchedMap.get(id);
+            if (!chunk || existingIds.has(chunk.id)) return null;
+            const info = refSources.get(id);
+            chunk._score = info ? info.score : 0;
+            chunk._refReason = info ? info.reason : '?';
+            return chunk;
+        })
+        .filter(Boolean);
 
-/**
- * Internal: call GPT-5.2 evaluator
- */
-async function _callEvaluator(query, results, log) {
-    const numbered = results.map((r, i) => {
-        const parts = [`[${i}] ${r.law || '?'} > ${r.section || '?'}`];
-        if (r.text) parts.push(r.text.substring(0, 200));
-        return parts.join('\n');
-    }).join('\n\n');
-
-    try {
-        const content = await callGPT52([
-            {
-                role: 'system',
-                content: `Eres un evaluador de contexto legal. Tu tarea es decidir si los fragmentos proporcionados son SUFICIENTES para responder la pregunta del usuario sobre legislación laboral española.
-
-IMPORTANTE: Puedes usar tu conocimiento preentrenado para IDENTIFICAR qué artículos o leyes faltan (líneas NEED), pero NO para evaluar si el contenido de los fragmentos es correcto o completo — solo evalúa lo que ves en el texto proporcionado.
-
-RESPONDE con EXACTAMENTE uno de estos formatos:
-
-OPCIÓN A — Si el contexto es SUFICIENTE para responder:
-READY
-
-OPCIÓN B — Si FALTA información crítica:
-NEED|número_artículo|nombre_ley
-DROP|índices_irrelevantes
-
-Reglas para NEED:
-- Solo pide artículos que sean IMPRESCINDIBLES para responder correctamente
-- Máximo 3 líneas NEED
-- Usa el nombre corto de la ley (ej: "Estatuto Trabajadores", "LGSS")
-
-Reglas para DROP:
-- Lista los índices [N] de fragmentos que NO aportan nada a la respuesta
-- Separados por comas en UNA sola línea
-- Si todos son relevantes, no incluyas línea DROP
-
-Regla especial:
-- Si la pregunta involucra derechos del trabajador, asegura que tienes los artículos base del Estatuto de los Trabajadores (ET). Si no los ves en los fragmentos, pídelos con NEED.
-
-Ejemplo de respuesta B:
-NEED|48|Estatuto Trabajadores
-NEED|177|LGSS
-DROP|0,3,7`,
-            },
-            {
-                role: 'user',
-                content: `Pregunta: ${query}\n\nFragmentos disponibles:\n${numbered}`,
-            },
-        ]);
-
-        log('S5c-EVAL', `GPT-5.2 eval raw: ${content.substring(0, 300)}`);
-
-        if (content.includes('READY')) {
-            return { ready: true, need: [], drop: [] };
-        }
-
-        // Parse NEED lines
-        const need = [];
-        for (const line of content.split('\n')) {
-            const needMatch = line.trim().match(/^NEED\|(.+)\|(.+)$/);
-            if (needMatch) {
-                const artMatch = needMatch[1].trim().match(/(\d+(?:\.\d+)?)/);
-                if (artMatch) {
-                    need.push({ art: artMatch[1], ley: needMatch[2].trim() });
-                }
-            }
-        }
-
-        // Parse DROP line
-        let drop = [];
-        const dropMatch = content.match(/^DROP\|([\d,\s]+)$/m);
-        if (dropMatch) {
-            drop = dropMatch[1].split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n));
-        }
-
-        return { ready: false, need: need.slice(0, 3), drop };
-    } catch (e) {
-        log('S5c-EVAL', `GPT-5.2 eval failed: ${e.message}`);
-        return { ready: true, need: [], drop: [] }; // On error, proceed
+    // Sort by inherited score descending, apply global cap
+    newResults.sort((a, b) => (b._score || 0) - (a._score || 0));
+    const beforeCap = newResults.length;
+    if (newResults.length > MAX_TOTAL_REFS) {
+        log('S5b-REFS', `Global cap: ${beforeCap} → ${MAX_TOTAL_REFS} refs (cut ${beforeCap - MAX_TOTAL_REFS} lowest-score)`);
+        newResults = newResults.slice(0, MAX_TOTAL_REFS);
     }
+
+    if (newResults.length > 0) {
+        log('S5b-REFS', `Added ${newResults.length} referenced chunks${beforeCap > MAX_TOTAL_REFS ? ` (capped from ${beforeCap})` : ''} (${allRefIds.size - beforeCap} filtered out):`);
+        newResults.forEach(r => {
+            log('S5b-REFS', `  + id=${r.id} [${r._refReason}] score=${(r._score || 0).toFixed(4)} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 60)}`);
+        });
+    } else {
+        log('S5b-REFS', `All ${allRefIds.size} candidate refs filtered out (no upward/sibling matches)`);
+    }
+
+    return { added: newResults, refsFound: allRefIds.size };
 }
 
-module.exports = { expandReferences, evaluateAndEnrich };
+module.exports = { expandReferences };

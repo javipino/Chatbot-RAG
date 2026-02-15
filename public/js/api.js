@@ -11,8 +11,8 @@ export const API = {
         } catch { return text.substring(0, 500); }
     },
 
-    async call(messages, preset, apiKey, systemPrompt = '') {
-        if (preset.format === 'rag') return this._callRAG(messages, apiKey);
+    async call(messages, preset, apiKey, systemPrompt = '', ragChunkIds = []) {
+        if (preset.format === 'rag') return this._callRAG(messages, apiKey, ragChunkIds);
 
         if (!apiKey) throw new Error('API key vacía');
 
@@ -42,7 +42,7 @@ export const API = {
         return response.json();
     },
 
-    async _callRAG(messages, apiKey) {
+    async _callRAG(messages, apiKey, previousChunkIds = []) {
         if (!apiKey) throw new Error('Function Key (RAG) vacía. Ponla en la configuración.');
 
         const ragMsgs = messages
@@ -56,10 +56,13 @@ export const API = {
                 return { role: m.role, content: text };
             });
 
+        const body = { messages: ragMsgs };
+        if (previousChunkIds.length > 0) body.previousChunkIds = previousChunkIds;
+
         const response = await fetch(Config.RAG_ENDPOINT, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
-            body: JSON.stringify({ messages: ragMsgs }),
+            body: JSON.stringify(body),
         });
 
         if (!response.ok) {

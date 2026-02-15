@@ -1,32 +1,43 @@
 // ── Stage 1: Query Expansion (GPT-5 Nano) ──
-// Decomposes user query into 1-4 search queries with legal terminology.
+// Decomposes user query into 1-4 short keyword search queries.
 
 const { callNano } = require('../services/openai');
 
-const EXPAND_SYSTEM_PROMPT = `Eres un asistente legal. Tu tarea es descomponer la pregunta del usuario en las BÚSQUEDAS NECESARIAS para encontrar toda la normativa relevante en una base de datos de legislación laboral y de Seguridad Social española.
+const EXPAND_SYSTEM_PROMPT = `Eres un asistente legal. Tu tarea es generar las PALABRAS CLAVE de búsqueda necesarias para encontrar normativa relevante en una base de datos de legislación laboral y de Seguridad Social española.
 
-RESPONDE SOLO con un JSON array de strings. Cada string es una búsqueda independiente.
+RESPONDE SOLO con un JSON array de strings. Cada string es una búsqueda de 3-6 palabras clave.
 
 Reglas:
-- Si la pregunta es SIMPLE (un solo concepto), devuelve UN array con una sola query expandida.
-  Ejemplo: "¿cuántos días de vacaciones tengo?" → ["vacaciones anuales retribuidas artículo 38 Estatuto de los Trabajadores derecho a vacaciones período de disfrute"]
-- Si la pregunta es COMPLEJA (compara, relaciona o involucra varios conceptos), devuelve VARIAS queries, una por cada concepto que hay que buscar por separado.
-  Ejemplo: "¿el trabajo de una empleada del hogar es pluriempleo o pluriactividad?" →
-  ["pluriempleo Seguridad Social alta simultánea mismo régimen artículo 148 LGSS cotización",
-   "pluriactividad Seguridad Social alta simultánea distintos regímenes artículo 149 LGSS",
-   "régimen especial empleadas del hogar Sistema Especial trabajadores del hogar artículo 250-251 LGSS"]
-- Si la pregunta es una CONTINUACIÓN de la conversación (ej: "¿y si no me las dan?"), usa el historial para entender el tema y genera queries completas y autocontenidas.
-- Máximo 4 queries. Si la pregunta necesita más, agrupa los conceptos más cercanos.
-- Cada query debe ser autocontenida (no depender de las otras).
-- Incluye siempre términos técnicos legales Y los coloquiales.
-- Traduce los términos coloquiales a sus equivalentes legales:
-  * "baja de maternidad/paternidad" → "suspensión del contrato por nacimiento y cuidado de menor, artículo 48 ET"
-  * "despido" → "extinción del contrato de trabajo, despido objetivo, disciplinario, artículo 49-56 ET"
-  * "paro" → "prestación por desempleo, artículo 262-267 LGSS"
-  * "baja médica" → "incapacidad temporal, artículo 169-176 LGSS"
-  * "pensión" → "prestación contributiva de jubilación, artículo 204-215 LGSS"
-  * "contrato temporal" → "contrato de duración determinada, artículo 15 ET"
-  * "finiquito" → "liquidación de haberes, extinción del contrato"
+- Cada query debe ser CORTA: solo 3-6 palabras clave relevantes. NO escribas frases completas.
+- NO incluyas números de artículo (ej: "artículo 48", "art. 250"). La búsqueda semántica no los necesita.
+- Incluye el término técnico-legal Y el coloquial si son distintos.
+- Si la pregunta es SIMPLE (un solo concepto), devuelve UN array con una sola query.
+  Ejemplo: "¿cuántos días de vacaciones tengo?" → ["vacaciones anuales retribuidas días disfrute"]
+- Si la pregunta es COMPLEJA (compara o involucra varios conceptos), devuelve VARIAS queries (una por concepto).
+  Ejemplo: "¿qué diferencia hay entre despido objetivo y disciplinario?" →
+  ["despido objetivo causas indemnización",
+   "despido disciplinario causas procedimiento"]
+- Equivalencias coloquiales a términos legales:
+  * "baja de maternidad" → "suspensión contrato nacimiento cuidado menor"
+  * "despido" → "extinción contrato despido"
+  * "paro" → "prestación desempleo"
+  * "baja médica" → "incapacidad temporal prestación"
+  * "pensión" → "jubilación prestación contributiva"
+  * "finiquito" → "liquidación haberes extinción contrato"
+- Máximo 4 queries. Agrupa conceptos cercanos si son más.
+
+RESPONDE SOLO con el JSON array. Sin explicaciones, sin markdown, sin backticks.`;
+
+const EXPAND_FOLLOWUP_PROMPT = `Eres un asistente legal. El usuario hace una pregunta de CONTINUACIÓN sobre la conversación previa.
+Ya tenemos el contexto normativo de la pregunta anterior (se inyectará automáticamente).
+Tu tarea es generar SOLO las búsquedas ADICIONALES necesarias para los conceptos NUEVOS que aparecen en esta pregunta de continuación.
+
+RESPONDE SOLO con un JSON array de strings (3-6 palabras clave cada una).
+- Si la pregunta no introduce conceptos nuevos (ej: "¿puedes explicarlo mejor?"), devuelve un array vacío: []
+- Si introduce conceptos nuevos, genera queries SOLO para esos conceptos nuevos.
+  Ejemplo (si la conversación era sobre vacaciones): "¿y si no me las dan?" → ["sanción incumplimiento empresario vacaciones reclamación"]
+- NO repitas búsquedas de conceptos que ya se trataron en la conversación anterior.
+- Máximo 3 queries nuevas.
 
 RESPONDE SOLO con el JSON array. Sin explicaciones, sin markdown, sin backticks.`;
 
@@ -34,20 +45,25 @@ RESPONDE SOLO con el JSON array. Sin explicaciones, sin markdown, sin backticks.
  * Expand a user query into 1-4 search queries using GPT-5 Nano
  * @param {string} query - User's natural language question
  * @param {Array} conversationHistory - Previous messages for context
+ * @param {boolean} hasCarryover - Whether previous chunk IDs are available
  * @returns {Promise<string[]>} Array of expanded search queries
  */
-async function expandQuery(query, conversationHistory) {
+async function expandQuery(query, conversationHistory, hasCarryover = false) {
     try {
-        const messages = [{ role: 'system', content: EXPAND_SYSTEM_PROMPT }];
+        // Determine if this is a follow-up question with carryover context
+        const isFollowUp = hasCarryover && conversationHistory?.length > 1;
+        const systemPrompt = isFollowUp ? EXPAND_FOLLOWUP_PROMPT : EXPAND_SYSTEM_PROMPT;
 
-        // Add recent conversation for context (last 4 messages, trimmed)
-        if (conversationHistory?.length > 0) {
+        const messages = [{ role: 'system', content: systemPrompt }];
+
+        // For follow-ups, add minimal conversation context so Nano understands the topic
+        if (isFollowUp && conversationHistory?.length > 0) {
             const recent = conversationHistory.slice(-4);
             for (const msg of recent) {
                 if (msg.role === 'user' || msg.role === 'assistant') {
                     messages.push({
                         role: msg.role,
-                        content: (msg.content || '').substring(0, 300),
+                        content: (msg.content || '').substring(0, 200),
                     });
                 }
             }
@@ -66,7 +82,8 @@ async function expandQuery(query, conversationHistory) {
         const match = cleaned.match(/\[[\s\S]*\]/);
         if (match) {
             const queries = JSON.parse(match[0]);
-            if (Array.isArray(queries) && queries.length > 0 && queries.every(q => typeof q === 'string')) {
+            if (Array.isArray(queries) && queries.every(q => typeof q === 'string')) {
+                // For follow-ups, empty array is valid (no new concepts)
                 return queries.slice(0, 4);
             }
         }

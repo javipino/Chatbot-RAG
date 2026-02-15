@@ -1,18 +1,25 @@
 // ── RAG route — full pipeline orchestration ──
+// Pipeline: S1 (expand) → S2-S4 (search) → S5b (refs) → S5 (unified answer+eval)
 
 const express = require('express');
 const { requireApiKey } = require('../middleware/auth');
 const { expandQuery } = require('../pipeline/expand');
 const { searchAll } = require('../pipeline/search');
-const { rerankResults } = require('../pipeline/rerank');
-const { expandReferences, evaluateAndEnrich } = require('../pipeline/enrich');
+const { expandReferences } = require('../pipeline/enrich');
 const { buildContext, generateAnswer } = require('../pipeline/answer');
+const { fetchChunksByIds, fetchByArticleFilter } = require('../services/qdrant');
+const { embed } = require('../services/openai');
+const { buildSparseVector } = require('../services/tfidf');
 
 const router = express.Router();
+
+const CARRYOVER_SCORE = 0.5;     // Default score for carryover chunks (USED in previous turn)
+const MAX_CHUNKS_TO_MODEL = 25;  // Max chunks sent to GPT-5.2
 
 router.post('/', requireApiKey, async (req, res) => {
     try {
         const messages = req.body?.messages || [];
+        const previousChunkIds = req.body?.previousChunkIds || [];
         if (!messages.length) {
             return res.status(400).json({ error: 'No messages provided' });
         }
@@ -23,57 +30,62 @@ router.post('/', requireApiKey, async (req, res) => {
         }
 
         const query = userMessage.content;
+        const hasCarryover = previousChunkIds.length > 0;
         const LOG = (stage, msg) => console.log(`[${stage}] ${msg}`);
         LOG('INIT', `Query: "${query.substring(0, 150)}"`);
+        if (hasCarryover) LOG('INIT', `Carryover: ${previousChunkIds.length} chunk IDs from previous turn`);
 
         // ── Stage 1: Query Expansion ──
         let expandedQueries;
         try {
-            expandedQueries = await expandQuery(query, messages);
+            expandedQueries = await expandQuery(query, messages, hasCarryover);
         } catch (e) { e._ragStage = '1-Expand'; throw e; }
         LOG('S1-EXPAND', `${expandedQueries.length} queries generated:`);
         expandedQueries.forEach((q, i) => LOG('S1-EXPAND', `  [${i}] "${q}"`));
 
-        // ── Stages 2-4: Embed + Sparse + Search ──
-        let searchResults, debugSearchDetail;
-        try {
-            const searchOutput = await searchAll(expandedQueries, LOG);
-            searchResults = searchOutput.results;
-            debugSearchDetail = searchOutput.debugDetail;
-        } catch (e) { e._ragStage = '2-4-Search'; throw e; }
+        // ── Carryover: fetch previous context chunks ──
+        let carryoverChunks = [];
+        if (hasCarryover) {
+            try {
+                carryoverChunks = await fetchChunksByIds(previousChunkIds);
+                carryoverChunks.forEach(c => { c._carryover = true; });
+                LOG('CARRYOVER', `Fetched ${carryoverChunks.length}/${previousChunkIds.length} chunks from previous turn`);
+            } catch (e) {
+                LOG('CARRYOVER', `ERROR (non-fatal): ${e.message}`);
+            }
+        }
 
-        // Log candidates going into reranking
-        LOG('S4→S5', `Candidates for reranking (${searchResults.length}):`);
+        // ── Stages 2-4: Embed + Sparse + Hybrid Search ──
+        let searchResults = [], debugSearchDetail = {};
+        if (expandedQueries.length > 0) {
+            try {
+                const searchOutput = await searchAll(expandedQueries, LOG);
+                searchResults = searchOutput.results;
+                debugSearchDetail = searchOutput.debugDetail;
+            } catch (e) { e._ragStage = '2-4-Search'; throw e; }
+        } else {
+            LOG('S2-S4', 'No new queries — using carryover context only');
+        }
+
+        LOG('S4-RESULTS', `Search returned ${searchResults.length} candidates:`);
         searchResults.forEach((r, i) => {
-            LOG('S4→S5', `  [${i}] id=${r.id} score=${(r.weightedScore || r.score || 0).toFixed(4)} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 80)}`);
+            LOG('S4-RESULTS', `  [${i}] id=${r.id} score=${(r.weightedScore || r.score || 0).toFixed(4)} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 80)}`);
         });
 
-        // ── Stage 5: Rerank ──
-        const rerankTopK = Math.min(8 * expandedQueries.length, 16);
-        let rerankedResults;
-        try {
-            rerankedResults = await rerankResults(query, searchResults, rerankTopK);
-        } catch (e) { e._ragStage = '5-Rerank'; throw e; }
-        LOG('S5-RERANK', `topK=${rerankTopK} → ${rerankedResults.length} survived:`);
-        rerankedResults.forEach((r, i) => {
-            LOG('S5-RERANK', `  [${i}] id=${r.id} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 80)}`);
-        });
-
-        // Log dropped by reranking
-        const rerankedIds = new Set(rerankedResults.map(r => r.id));
-        const droppedByRerank = searchResults.filter(r => !rerankedIds.has(r.id));
-        if (droppedByRerank.length > 0) {
-            LOG('S5-RERANK', `DROPPED by rerank (${droppedByRerank.length}):`);
-            droppedByRerank.forEach(r => {
-                LOG('S5-RERANK', `  ✗ id=${r.id} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 80)}`);
-            });
+        // ── Merge carryover chunks (previous turn context, prepended for priority) ──
+        let mergedResults = [...searchResults];
+        if (carryoverChunks.length > 0) {
+            const newIds = new Set(searchResults.map(r => r.id));
+            const uniqueCarryover = carryoverChunks.filter(c => !newIds.has(c.id));
+            LOG('CARRYOVER', `Merging ${uniqueCarryover.length} carryover chunks (${carryoverChunks.length - uniqueCarryover.length} already in new results)`);
+            mergedResults = [...uniqueCarryover, ...searchResults];
         }
 
         // ── Stage 5b: Reference Expansion ──
-        let allResults = [...rerankedResults];
+        let allResults = [...mergedResults];
         let debugRefChasing = { refsFound: 0, chasedAdded: 0, error: null };
         try {
-            const refOutput = await expandReferences(rerankedResults, LOG);
+            const refOutput = await expandReferences(mergedResults, LOG);
             allResults = [...allResults, ...refOutput.added];
             debugRefChasing.refsFound = refOutput.refsFound;
             debugRefChasing.chasedAdded = refOutput.added.length;
@@ -82,64 +94,144 @@ router.post('/', requireApiKey, async (req, res) => {
             LOG('S5b-REFS', `ERROR (non-fatal): ${refErr.message}`);
         }
 
-        // ── Stage 5c: Iterative Context Evaluation ──
-        let debugEval;
-        try {
-            const enrichOutput = await evaluateAndEnrich(query, allResults, LOG);
-            allResults = enrichOutput.results;
-            debugEval = enrichOutput.debugEval;
-        } catch (evalErr) {
-            debugEval = { iterations: 0, needed: [], dropped: [], errors: [evalErr.message] };
-            LOG('S5c-EVAL', `ERROR (non-fatal): ${evalErr.message}`);
+        // ── Scoring & Cap: normalize scores, sort, trim ──
+        for (const r of allResults) {
+            if (r._score == null) {
+                r._score = r._carryover ? CARRYOVER_SCORE : (r.weightedScore || r.score || 0);
+            }
+        }
+        allResults.sort((a, b) => (b._score || 0) - (a._score || 0));
+        if (allResults.length > MAX_CHUNKS_TO_MODEL) {
+            LOG('S5-CAP', `Trimming ${allResults.length} → ${MAX_CHUNKS_TO_MODEL} chunks (cut ${allResults.length - MAX_CHUNKS_TO_MODEL} lowest-score)`);
+            allResults = allResults.slice(0, MAX_CHUNKS_TO_MODEL);
         }
 
-        // ── Stage 6: Build Context + Answer ──
-        LOG('S6-ANSWER', `Final context: ${allResults.length} chunks`);
+        // ── Stage 5: Unified Answer + Evaluation (GPT-5.2) ──
+        LOG('S5-ANSWER', `Context: ${allResults.length} chunks`);
         allResults.forEach((r, i) => {
-            LOG('S6-ANSWER', `  [${i}] id=${r.id} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 80)}${r._chased ? ' [CHASED]' : ''}`);
+            const tag = r._carryover ? ' [CARRY]' : r._refReason ? ' [REF]' : '';
+            LOG('S5-ANSWER', `  [${i}] id=${r.id} score=${(r._score || 0).toFixed(4)} (${r.collection}) ${r.law || '?'} > ${(r.section || '?').substring(0, 80)}${tag}`);
         });
 
         const ragContext = buildContext(allResults);
-        LOG('S6-ANSWER', `Context size: ${ragContext.length} chars`);
+        LOG('S5-ANSWER', `Context size: ${ragContext.length} chars`);
 
-        let answer;
+        let answerResult;
         try {
-            answer = await generateAnswer(ragContext, messages);
-        } catch (e) { e._ragStage = '6-Answer(GPT-5.2)'; throw e; }
-        LOG('S6-ANSWER', `Response length: ${answer.length} chars`);
+            answerResult = await generateAnswer(ragContext, messages);
+        } catch (e) { e._ragStage = '5-Answer(GPT-5.2)'; throw e; }
+
+        const { answer, used, drop, need } = answerResult;
+        LOG('S5-ANSWER', `Response length: ${answer.length} chars`);
+        LOG('S5-ANSWER', `USED indices: [${used.join(',')}]`);
+        LOG('S5-ANSWER', `DROP indices: [${drop.join(',')}]`);
+        if (need.length > 0) LOG('S5-ANSWER', `NEED: ${need.map(n => n.type === 'article' ? `Art.${n.art} ${n.ley}` : `Q:"${n.query}"`).join(', ')}`);
+
+        // ── NEED iteration: if GPT-5.2 requests missing info, fetch & retry once ──
+        let finalAnswer = answer;
+        if (need.length > 0) {
+            LOG('S5-NEED', `Fetching ${need.length} NEED requests...`);
+            try {
+                const existingIds = new Set(allResults.map(r => r.id));
+                let allNewChunks = [];
+
+                // Split NEEDs by type
+                const articleNeeds = need.filter(n => n.type === 'article');
+                const queryNeeds = need.filter(n => n.type === 'query');
+
+                // Fetch article-specific NEEDs
+                if (articleNeeds.length > 0) {
+                    LOG('S5-NEED', `Fetching ${articleNeeds.length} article requests: ${articleNeeds.map(n => `Art.${n.art} ${n.ley}`).join(', ')}`);
+                    const articleChunks = await fetchByArticleFilter(articleNeeds, embed, buildSparseVector, LOG);
+                    allNewChunks.push(...articleChunks.filter(r => !existingIds.has(r.id)));
+                }
+
+                // Fetch query-type NEEDs via search pipeline
+                if (queryNeeds.length > 0) {
+                    const queries = queryNeeds.map(n => n.query);
+                    LOG('S5-NEED', `Running ${queries.length} search queries: ${queries.map(q => `"${q}"`).join(', ')}`);
+                    const searchOutput = await searchAll(queries, LOG);
+                    allNewChunks.push(...searchOutput.results.filter(r => !existingIds.has(r.id)));
+                }
+
+                // Dedup
+                const seenNew = new Set();
+                const newChased = allNewChunks.filter(r => {
+                    if (seenNew.has(r.id) || existingIds.has(r.id)) return false;
+                    seenNew.add(r.id);
+                    return true;
+                });
+                LOG('S5-NEED', `Got ${newChased.length} new chunks`);
+
+                if (newChased.length > 0) {
+                    // Score NEED chunks and merge
+                    for (const r of newChased) {
+                        if (r._score == null) r._score = r.weightedScore || r.score || 0.3;
+                    }
+                    allResults = [...allResults, ...newChased];
+                    // Re-sort and soft-cap retry (allow +5 over base cap for NEED)
+                    allResults.sort((a, b) => (b._score || 0) - (a._score || 0));
+                    const retryCap = MAX_CHUNKS_TO_MODEL + 5;
+                    if (allResults.length > retryCap) {
+                        LOG('S5-NEED', `Retry cap: ${allResults.length} → ${retryCap} chunks`);
+                        allResults = allResults.slice(0, retryCap);
+                    }
+                    const ragContext2 = buildContext(allResults);
+                    LOG('S5-NEED', `Retrying answer with ${allResults.length} chunks (${ragContext2.length} chars)`);
+                    const answerResult2 = await generateAnswer(ragContext2, messages);
+                    finalAnswer = answerResult2.answer;
+                    // Update used/drop from retry
+                    used.length = 0; used.push(...answerResult2.used);
+                    drop.length = 0; drop.push(...answerResult2.drop);
+                    LOG('S5-NEED', `Retry USED: [${answerResult2.used.join(',')}], DROP: [${answerResult2.drop.join(',')}]`);
+                }
+            } catch (needErr) {
+                LOG('S5-NEED', `ERROR (non-fatal): ${needErr.message}`);
+            }
+        }
+
+        // ── Build contextChunkIds for carryover (exclude DROP indices) ──
+        const dropSet = new Set(drop);
+        const contextChunkIds = allResults
+            .map((r, i) => dropSet.has(i) ? null : r.id)
+            .filter(id => id !== null);
+        // Deduplicate
+        const uniqueContextIds = [...new Set(contextChunkIds)];
+
+        LOG('S5-ANSWER', `Carryover: ${uniqueContextIds.length} chunk IDs (${drop.length} dropped)`);
 
         // Build response
-        const sources = allResults.map(r => ({
-            law: r.law || '',
-            section: r.section || '',
-            chapter: r.chapter || '',
-            collection: r.collection,
-            _chased: r._chased || false,
-        }));
+        const sources = allResults
+            .filter((_, i) => !dropSet.has(i))
+            .map(r => ({
+                id: r.id,
+                law: r.law || '',
+                section: r.section || '',
+                chapter: r.chapter || '',
+                collection: r.collection,
+                _carryover: r._carryover || false,
+            }));
 
         res.json({
-            choices: [{ message: { role: 'assistant', content: answer } }],
+            choices: [{ message: { role: 'assistant', content: finalAnswer } }],
             sources,
+            contextChunkIds: uniqueContextIds,
             _debug: {
                 expandedQueries: expandedQueries.map(q => q.substring(0, 150)),
                 searchDetail: debugSearchDetail,
                 searchResults: searchResults.length,
-                rerankedResults: rerankedResults.length,
-                droppedByRerank: droppedByRerank.map(r => ({
-                    id: r.id,
-                    law: r.law || '',
-                    section: (r.section || '').substring(0, 60),
-                    collection: r.collection,
-                })),
                 refChasing: debugRefChasing,
-                contextEval: debugEval,
+                usedIndices: used,
+                dropIndices: drop,
+                needRequests: need,
                 totalSources: allResults.length,
-                finalSources: allResults.map(r => ({
+                finalSources: allResults.map((r, i) => ({
                     id: r.id,
                     law: r.law || '',
                     section: (r.section || '').substring(0, 60),
                     collection: r.collection,
-                    chased: r._chased || false,
+                    dropped: dropSet.has(i),
+                    carryover: r._carryover || false,
                 })),
             },
         });

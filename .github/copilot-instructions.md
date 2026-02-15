@@ -75,29 +75,28 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 - **LLMs:** Azure OpenAI (GPT-5.2 + GPT-5 Nano + text-embedding-3-small)
 - **CI/CD:** GitHub Actions — pre-built zip deploy (sin Oryx build en servidor)
 
-### RAG Pipeline (6 etapas)
+### RAG Pipeline (4 etapas)
 
 ```
 Query → 1.Expand(Nano) → 2.Embed(e3s) → 3.Sparse(TF-IDF)
      → 4.Search(Qdrant ×3 colecciones, híbrido RRF)
-     → 5.Rerank(Nano) → 5b.Refs → 5c.Eval(GPT-5.2 iterativo)
-     → 6.Answer(GPT-5.2 + contexto)
+     → 5b.Refs(filtradas) → 5.Answer+Eval(GPT-5.2 unificado)
 ```
 
-- **Query expansion:** GPT-5 Nano expande pregunta general en 1-4 búsquedas legales específicas
+- **Query expansion:** GPT-5 Nano genera 1-4 búsquedas de keywords (3-6 palabras)
+- **Context carryover:** Chunks de turnos anteriores se arrastran automáticamente
 - **Búsqueda híbrida:** Dense (semántica) + Sparse (TF-IDF/BM25) con fusión RRF
 - **Cross-collection:** 3 queries paralelas, ponderación configurable (normativa×1.0, sentencias×0.8, criterios×0.9)
-- **Reranker:** GPT-5 Nano puntúa relevancia 1-10, topK dinámico (8-16 según nº queries)
-- **Reference expansion:** Chunks pre-computados `refs[]` → fetch por ID desde Qdrant
-- **Context evaluation:** GPT-5.2 evalúa contexto (NEED/DROP/READY), iterativo ×2
+- **Reference expansion:** Refs pre-computadas filtradas (dirección ascendente, siblings, cap 3/chunk)
+- **Unified answer:** GPT-5.2 responde + reporta USED/DROP/NEED en una sola llamada
+- **DROP → carryover:** Chunks marcados como DROP no se arrastran a turnos siguientes
 - **Vocabulario TF-IDF:** JSON estático desplegado con el servidor (`server/data/tfidf_vocabulary.json`)
 
 ### Logging
 
 Todas las etapas emiten logs con tag `[STAGE]` para diagnóstico:
-- `[INIT]`, `[S1-EXPAND]`, `[S2-EMBED]`, `[S3-SPARSE]`, `[S4-SEARCH]`, `[S4-MERGE]`
-- `[S4→S5]`, `[S5-RERANK]`, `[S5b-REFS]`, `[S5c-EVAL]`, `[S5c-FETCH]`
-- `[S6-ANSWER]`
+- `[INIT]`, `[S1-EXPAND]`, `[CARRYOVER]`, `[S2-EMBED]`, `[S3-SPARSE]`, `[S4-SEARCH]`, `[S4-RESULTS]`
+- `[S5b-REFS]`, `[S5-ANSWER]`, `[S5-NEED]`
 
 ---
 
@@ -130,9 +129,8 @@ Todas las etapas emiten logs con tag `[STAGE]` para diagnóstico:
 │   ├── pipeline/
 │   │   ├── expand.js            # Stage 1: Query decomposition
 │   │   ├── search.js            # Stages 2-4: Embed + sparse + hybrid search
-│   │   ├── rerank.js            # Stage 5: LLM reranking
-│   │   ├── enrich.js            # Stages 5b+5c: Refs + context evaluation
-│   │   └── answer.js            # Stage 6: Context building + generation
+│   │   ├── enrich.js            # Stage 5b: Reference expansion (filtered)
+│   │   └── answer.js            # Stage 5: Unified answer + eval (GPT-5.2)
 │   └── data/
 │       └── tfidf_vocabulary.json
 ├── src/scripts/                 # Offline processing (Python + Node.js)

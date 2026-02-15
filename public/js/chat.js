@@ -12,6 +12,7 @@ export const Chat = {
     systemPrompt: '',
     pendingAttachments: [],
     isLoading: false,
+    ragChunkIds: [],  // carryover: chunk IDs from last RAG response
 
     init() {
         const config = Storage.loadConfig();
@@ -56,6 +57,7 @@ export const Chat = {
         }
         this.conversationHistory = conv.messages || [];
         this.currentConvId = id;
+        this.ragChunkIds = [];  // reset carryover when switching conversations
         Storage.setCurrentConvId(id);
         this.rebuildChat();
         this.renderHistoryList();
@@ -76,6 +78,7 @@ export const Chat = {
         if (this.conversationHistory.length > 0) this.saveCurrentConversation();
         this.conversationHistory = [];
         this.currentConvId = null;
+        this.ragChunkIds = [];
         UI.clearChat();
         this.clearAttachments();
         this.renderHistoryList();
@@ -195,11 +198,14 @@ export const Chat = {
 
         const startTime = Date.now();
         try {
-            const data = await API.call(this.conversationHistory, preset, apiKey, this.systemPrompt);
+            const data = await API.call(this.conversationHistory, preset, apiKey, this.systemPrompt, this.ragChunkIds);
             const result = API.extractResponse(data);
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
             const tokens = data.usage ? `${data.usage.total_tokens} tok` : '';
             const meta = `${preset.name} · ${elapsed}s ${tokens}`;
+
+            // Update carryover chunk IDs for next RAG turn
+            if (data.contextChunkIds) this.ragChunkIds = data.contextChunkIds;
 
             UI.addMessage('assistant', result.text, { reasoning: result.reasoning, meta });
             this.conversationHistory.push({ role: 'assistant', content: result.text });
