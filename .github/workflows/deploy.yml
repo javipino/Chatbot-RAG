@@ -32,8 +32,20 @@ jobs:
             package-lock.json
 
       - name: Deploy to App Service
-        uses: azure/webapps-deploy@v3
-        with:
-          app-name: chatbot-rag-javi
-          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: deploy.zip
+        env:
+          PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+        run: |
+          # Extract credentials from publish profile
+          USERNAME=$(echo "$PUBLISH_PROFILE" | grep -oP 'userName="\K[^"]+' | head -1)
+          PASSWORD=$(echo "$PUBLISH_PROFILE" | grep -oP 'userPWD="\K[^"]+' | head -1)
+
+          # Deploy via Kudu zip API
+          curl -s -w "\nHTTP %{http_code}" \
+            -X POST \
+            -u "$USERNAME:$PASSWORD" \
+            -H "Content-Type: application/zip" \
+            --data-binary @deploy.zip \
+            "https://chatbot-rag-javi.scm.azurewebsites.net/api/zipdeploy?isAsync=false" \
+            | tail -1
+
+          echo "Deployed successfully"
