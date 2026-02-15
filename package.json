@@ -4,7 +4,7 @@
   "description": "RAG Chatbot - Normativa laboral y Seguridad Social",
   "private": true,
   "scripts": {
-    "start": "node server.js"
+    "start": "node server/index.js"
   },
   "dependencies": {
     "express": "^4.22.1"

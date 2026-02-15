@@ -15,11 +15,10 @@ if (Test-Path $stagingDir) { Remove-Item $stagingDir -Recurse -Force }
 New-Item $stagingDir -ItemType Directory | Out-Null
 
 # Copy only what the App Service needs
-Copy-Item "$PSScriptRoot\server.js" "$stagingDir\"
+Copy-Item "$PSScriptRoot\server" "$stagingDir\server" -Recurse
+Copy-Item "$PSScriptRoot\public" "$stagingDir\public" -Recurse
 Copy-Item "$PSScriptRoot\package.json" "$stagingDir\"
 Copy-Item "$PSScriptRoot\package-lock.json" "$stagingDir\" -ErrorAction SilentlyContinue
-Copy-Item "$PSScriptRoot\api" "$stagingDir\api" -Recurse
-Copy-Item "$PSScriptRoot\ui" "$stagingDir\ui" -Recurse
 
 # Install production dependencies locally (avoid Oryx build on server = saves CPU quota)
 Write-Host "Installing dependencies..." -ForegroundColor Yellow
@@ -38,7 +37,7 @@ Write-Host "Zip: $("{0:N1}" -f ((Get-Item $zipFile).Length/1MB)) MB"
 # Deploy via zip deploy (skips Oryx build = saves CPU quota on F1)
 Write-Host "`n=== Deploying to $appName ===" -ForegroundColor Cyan
 az webapp config appsettings set --name $appName --resource-group $resourceGroup --settings SCM_DO_BUILD_DURING_DEPLOYMENT=false 2>&1 | Out-Null
-az webapp deploy --name $appName --resource-group $resourceGroup --src-path $zipFile --type zip --restart true 2>&1
+az webapp deploy --name $appName --resource-group $resourceGroup --src-path $zipFile --type zip --clean true 2>&1
 
 # Cleanup
 Remove-Item $stagingDir -Recurse -Force
