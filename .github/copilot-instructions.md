@@ -165,12 +165,16 @@ Todas las etapas emiten logs con tag `[STAGE]` para diagnóstico:
 ### CI/CD (GitHub Actions)
 Auto-deploy en cada push a `master`:
 1. `npm ci --omit=dev` (instala solo express)
-2. Zip: `server/`, `public/`, `node_modules/`, `package.json`
-3. `az webapp deploy --type zip --clean true`
-4. `SCM_DO_BUILD_DURING_DEPLOYMENT=false` (evita Oryx build → ahorra CPU del F1)
+2. `zip -r deploy.zip server/ public/ node_modules/ package.json package-lock.json`
+3. Kudu zipdeploy API vía `curl` con basic auth (publish profile credentials)
+4. Poll async hasta `status=4` (success)
+5. `SCM_DO_BUILD_DURING_DEPLOYMENT=false` en App Settings (evita Oryx build)
 
 **Workflow:** `.github/workflows/deploy.yml`
-**Requiere:** GitHub secret `AZURE_CREDENTIALS` (service principal JSON)
+**Requiere:** GitHub secret `AZURE_WEBAPP_PUBLISH_PROFILE` (en environment `Chatbot-RAG`)
+
+⚠️ **Zip paths:** En Windows, usar .NET `ZipFile` con `.Replace('\\','/')` para crear
+zips con forward slashes. `Compress-Archive` usa backslashes que rompen rsync en Linux.
 
 ### Deploy manual
 ```powershell
@@ -180,7 +184,7 @@ Auto-deploy en cada push a `master`:
 ### App Service Config
 - **Startup command:** `node server/index.js`
 - **Runtime:** Node 20 LTS, Linux
-- **Plan:** F1 (free, 60 min CPU/día)
+- **Plan:** B1 (básico, ~€12/mes) — F1 free tiene límite 60 min CPU/día
 
 ---
 
@@ -214,7 +218,6 @@ gh run list --repo javipino/Chatbot-RAG --limit 3
 ## Entorno de trabajo
 
 - **OS:** Windows 10, PowerShell 5.1
-- **Proxy corporativo:** `proxy-tmp.seg-social.es:8080` (bloquea POST desde scripts, browser same-origin funciona)
 - **Sin derechos de admin**
 - **GitHub:** repo `javipino/Chatbot-RAG` (público), cuenta `javipino`
 - **Git remote:** `https://javipino@github.com/javipino/Chatbot-RAG.git`
@@ -224,7 +227,6 @@ gh run list --repo javipino/Chatbot-RAG --limit 3
 ## Notas técnicas
 
 - **GPT-5 Nano** no soporta `temperature`, solo `max_completion_tokens` (usar 4096)
-- **Proxy corporativo** bloquea POST — por eso se usa App Service como proxy
 - **Qdrant free tier:** 1GB RAM, sin pausa por inactividad
 - **TF-IDF vocabulary:** generado offline por `build_tfidf.js`, desplegado con el servidor
 - **RRF k=2** en Qdrant (default). Azure AI Search usaba k=60.

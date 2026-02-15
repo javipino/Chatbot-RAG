@@ -31,21 +31,52 @@ jobs:
             package.json \
             package-lock.json
 
-      - name: Deploy to App Service
+      - name: Deploy to App Service via Kudu
         env:
           PUBLISH_PROFILE: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
         run: |
-          # Extract credentials from publish profile
+          # Extract credentials from publish profile XML
           USERNAME=$(echo "$PUBLISH_PROFILE" | grep -oP 'userName="\K[^"]+' | head -1)
           PASSWORD=$(echo "$PUBLISH_PROFILE" | grep -oP 'userPWD="\K[^"]+' | head -1)
 
-          # Deploy via Kudu zip API
-          curl -s -w "\nHTTP %{http_code}" \
+          if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
+            echo "::error::Failed to extract credentials from publish profile"
+            exit 1
+          fi
+
+          echo "Deploying $(du -h deploy.zip | cut -f1) to chatbot-rag-javi..."
+
+          # Deploy via Kudu zipdeploy API (async, then poll)
+          HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
             -X POST \
             -u "$USERNAME:$PASSWORD" \
             -H "Content-Type: application/zip" \
             --data-binary @deploy.zip \
-            "https://chatbot-rag-javi.scm.azurewebsites.net/api/zipdeploy?isAsync=false" \
-            | tail -1
+            "https://chatbot-rag-javi.scm.azurewebsites.net/api/zipdeploy?isAsync=true")
 
-          echo "Deployed successfully"
+          echo "Kudu response: HTTP $HTTP_CODE"
+          if [ "$HTTP_CODE" != "202" ] && [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Zipdeploy failed with HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+          # Poll deployment status (max 2 min)
+          echo "Polling deployment status..."
+          for i in $(seq 1 24); do
+            sleep 5
+            STATUS=$(curl -s -u "$USERNAME:$PASSWORD" \
+              "https://chatbot-rag-javi.scm.azurewebsites.net/api/deployments" \
+              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0].get('status',0), d[0].get('complete',False))" 2>/dev/null || echo "0 False")
+            echo "  [$((i*5))s] status=$STATUS"
+            if echo "$STATUS" | grep -q "True"; then
+              if echo "$STATUS" | grep -q "^4"; then
+                echo "✅ Deployment succeeded!"
+                exit 0
+              else
+                echo "::error::Deployment failed (status=$STATUS)"
+                exit 1
+              fi
+            fi
+          done
+          echo "::error::Deployment timed out after 120s"
+          exit 1
