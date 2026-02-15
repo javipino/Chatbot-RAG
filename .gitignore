@@ -1,8 +1,9 @@
-# Environment variables (SECRETS - never commit!)
+# Environment variables & credentials (SECRETS - never commit!)
 .env
 .env.local
 .env.production
 local.settings.json
+publish-profile*.xml
 
 # Python
 __pycache__/

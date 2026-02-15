@@ -184,7 +184,7 @@ zips con forward slashes. `Compress-Archive` usa backslashes que rompen rsync en
 ### App Service Config
 - **Startup command:** `node server/index.js`
 - **Runtime:** Node 20 LTS, Linux
-- **Plan:** B1 (básico, ~€12/mes) — F1 free tiene límite 60 min CPU/día
+- **Plan:** F1 (free) — límite 60 min CPU/día
 
 ---
 
