@@ -1,5 +1,9 @@
 # Pipeline RAG — Etapas, Modelos y Prompts
 
+> **Código fuente:** `server/pipeline/` (expand.js, search.js, rerank.js, enrich.js, answer.js)
+> **Orquestación:** `server/routes/rag.js`
+> **Servicios:** `server/services/` (openai.js, qdrant.js, tfidf.js, http.js)
+
 ## Resumen del flujo
 
 ```
