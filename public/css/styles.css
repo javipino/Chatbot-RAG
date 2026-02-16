@@ -39,6 +39,13 @@ body {
 
 .sidebar-header .app-icon { font-size: 18px; }
 
+.app-icon svg {
+    width: 18px;
+    height: 18px;
+    stroke-width: 2;
+    color: #a8b2bd;
+}
+
 .sidebar-header h1 {
     font-size: 13px;
     font-weight: 600;
@@ -56,6 +63,11 @@ body {
     cursor: pointer;
     padding: 2px 6px;
     border-radius: 4px;
+}
+
+.sidebar-close svg {
+    width: 16px;
+    height: 16px;
 }
 
 .sidebar-close:hover {
@@ -121,6 +133,11 @@ body {
     flex: 1;
     justify-content: center;
     min-width: 0;
+}
+
+.action-btn svg {
+    width: 14px;
+    height: 14px;
 }
 
 .action-btn:hover {
@@ -361,6 +378,11 @@ body {
     cursor: pointer;
     padding: 4px 8px;
     border-radius: 4px;
+}
+
+.mobile-bar button svg {
+    width: 18px;
+    height: 18px;
 }
 
 .mobile-bar button:hover { background: #3c3c3c; }
@@ -739,6 +761,9 @@ body {
     max-width: 800px;
     width: 100%;
     margin: 0 auto;
+    position: sticky;
+    bottom: 0;
+    z-index: 30;
 }
 
 #preview-area {
@@ -782,17 +807,29 @@ body {
 
 .input-row {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     align-items: flex-end;
+}
+
+.composer-shell {
+    background: #2d2d2d;
+    border: 1px solid #404040;
+    border-radius: 22px;
+    padding: 4px;
+}
+
+.composer-shell:focus-within {
+    border-color: #0078d4;
+    box-shadow: 0 0 0 1px #0078d420;
 }
 
 #user-input {
     flex: 1;
-    background: #2d2d2d;
-    border: 1px solid #404040;
+    background: transparent;
+    border: none;
     color: #d4d4d4;
-    padding: 12px 16px;
-    border-radius: 20px;
+    padding: 10px 12px;
+    border-radius: 18px;
     font-size: 14px;
     resize: none;
     font-family: inherit;
@@ -804,19 +841,17 @@ body {
 
 #user-input:focus {
     outline: none;
-    border-color: #0078d4;
-    box-shadow: 0 0 0 1px #0078d420;
 }
 
 #user-input:disabled { opacity: 0.3; }
 
 .attach-btn {
-    background: #2d2d2d;
+    background: transparent;
     color: #888;
-    border: 1px solid #404040;
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
+    border: none;
+    width: 38px;
+    height: 38px;
+    border-radius: 16px;
     cursor: pointer;
     font-size: 18px;
     display: flex;
@@ -826,8 +861,13 @@ body {
     transition: all 0.12s;
 }
 
+.attach-btn svg {
+    width: 18px;
+    height: 18px;
+}
+
 .attach-btn:hover {
-    background: #3c3c3c;
+    background: #3a3a3a;
     color: #e0e0e0;
 }
 
@@ -835,9 +875,9 @@ body {
     background: #0078d4;
     color: white;
     border: none;
-    width: 44px;
-    height: 44px;
-    border-radius: 50%;
+    width: 38px;
+    height: 38px;
+    border-radius: 16px;
     cursor: pointer;
     font-size: 16px;
     display: flex;
@@ -848,8 +888,8 @@ body {
 }
 
 #btn-send:hover { background: #1a8ae8; }
-#btn-send:disabled { opacity: 0.2; cursor: not-allowed; }
-#btn-send svg { width: 18px; height: 18px; fill: currentColor; }
+#btn-send:disabled { opacity: 0.35; cursor: not-allowed; }
+#btn-send svg { width: 18px; height: 18px; stroke-width: 2.2; }
 
 /* ====================================
    Responsive
@@ -884,6 +924,7 @@ body {
         width: 100vw;
         max-width: 100vw;
         overflow: hidden;
+        position: relative;
     }
 
     #chat {
@@ -898,9 +939,13 @@ body {
     }
 
     #input-area {
-        padding: 8px 10px max(12px, env(safe-area-inset-bottom, 12px));
+        padding: 8px 10px max(10px, env(safe-area-inset-bottom, 10px));
         max-width: 100%;
         flex-shrink: 0;
+        position: sticky;
+        bottom: 0;
+        background: #1e1e1e;
+        backdrop-filter: blur(2px);
     }
 
     .input-row {
@@ -915,8 +960,9 @@ body {
 
     .attach-btn,
     #btn-send {
-        width: 40px;
-        height: 40px;
+        width: 36px;
+        height: 36px;
+        border-radius: 14px;
     }
 
     .msg.user {

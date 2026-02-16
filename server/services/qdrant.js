@@ -60,11 +60,13 @@ async function searchCollection(collectionName, denseVector, sparseVector, topK 
 }
 
 /**
- * Cross-collection search + weighted merge (top 20)
+ * Cross-collection search + weighted merge (dynamic top-N)
  */
-async function searchAllCollections(denseVector, sparseVector) {
+async function searchAllCollections(denseVector, sparseVector, finalLimit = 10) {
+    const perCollectionTopK = Math.min(10, Math.max(5, finalLimit));
+
     const promises = COLLECTIONS.map(col =>
-        searchCollection(col.name, denseVector, sparseVector, 10)
+        searchCollection(col.name, denseVector, sparseVector, perCollectionTopK)
             .then(results => results.map(r => ({
                 ...r,
                 weightedScore: r.score * col.weight,
@@ -79,7 +81,7 @@ async function searchAllCollections(denseVector, sparseVector) {
 
     const allResults = (await Promise.all(promises)).flat();
     allResults.sort((a, b) => b.weightedScore - a.weightedScore);
-    return allResults.slice(0, 20);
+    return allResults.slice(0, finalLimit);
 }
 
 /**

@@ -80,14 +80,15 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 ```
 Query → 1.Expand(Nano) → 2.Embed(e3s) → 3.Sparse(TF-IDF)
      → 4.Search(Qdrant ×3 colecciones, híbrido RRF)
-     → 5b.Refs(filtradas) → 5.Answer+Eval(GPT-5.2 unificado)
+     → 5b.Refs(filtradas, score heredado) → Cap(sort+top25) → 5.Answer+Eval(GPT-5.2)
 ```
 
 - **Query expansion:** GPT-5 Nano genera 1-4 búsquedas de keywords (3-6 palabras)
-- **Context carryover:** Chunks de turnos anteriores se arrastran automáticamente
+- **Context carryover:** Chunks de turnos anteriores se arrastran automáticamente (score=0.5)
 - **Búsqueda híbrida:** Dense (semántica) + Sparse (TF-IDF/BM25) con fusión RRF
 - **Cross-collection:** 3 queries paralelas, ponderación configurable (normativa×1.0, sentencias×0.8, criterios×0.9)
-- **Reference expansion:** Refs pre-computadas filtradas (dirección ascendente, siblings, cap 3/chunk)
+- **Reference expansion:** Refs pre-computadas filtradas (dirección ascendente, siblings, cap 3/chunk, cap global 15 refs). Score heredado = padre × 0.8
+- **Scoring & Cap:** Todos los chunks se puntuan con `_score` (search=weightedScore, carryover=0.5, refs=heredado), se ordenan por score desc y se toman top 25 (MAX_CHUNKS_TO_MODEL)
 - **Unified answer:** GPT-5.2 responde + reporta USED/DROP/NEED en una sola llamada
 - **DROP → carryover:** Chunks marcados como DROP no se arrastran a turnos siguientes
 - **Vocabulario TF-IDF:** JSON estático desplegado con el servidor (`server/data/tfidf_vocabulary.json`)
@@ -96,7 +97,7 @@ Query → 1.Expand(Nano) → 2.Embed(e3s) → 3.Sparse(TF-IDF)
 
 Todas las etapas emiten logs con tag `[STAGE]` para diagnóstico:
 - `[INIT]`, `[S1-EXPAND]`, `[CARRYOVER]`, `[S2-EMBED]`, `[S3-SPARSE]`, `[S4-SEARCH]`, `[S4-RESULTS]`
-- `[S5b-REFS]`, `[S5-ANSWER]`, `[S5-NEED]`
+- `[S5b-REFS]`, `[S5-CAP]`, `[S5-ANSWER]`, `[S5-NEED]`
 
 ---
 

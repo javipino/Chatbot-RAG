@@ -5,6 +5,24 @@ const { embed } = require('../services/openai');
 const { buildSparseVector } = require('../services/tfidf');
 const { searchAllCollections } = require('../services/qdrant');
 
+const SINGLE_QUERY_RESULTS = 10;
+const MULTI_QUERY_TOTAL_RESULTS = 16;
+const MULTI_QUERY_MIN_PER_QUERY = 3;
+
+function computeSearchBudget(queryCount) {
+    if (queryCount <= 1) {
+        return { perQueryLimit: SINGLE_QUERY_RESULTS, totalLimit: SINGLE_QUERY_RESULTS };
+    }
+
+    const perQueryLimit = Math.max(
+        MULTI_QUERY_MIN_PER_QUERY,
+        Math.floor(MULTI_QUERY_TOTAL_RESULTS / queryCount)
+    );
+    const totalLimit = perQueryLimit * queryCount;
+
+    return { perQueryLimit, totalLimit };
+}
+
 /**
  * Execute parallel hybrid search for all expanded queries
  * @param {string[]} expandedQueries - Array of search queries from Stage 1
@@ -15,6 +33,10 @@ async function searchAll(expandedQueries, log) {
     const allSearchResults = [];
     const seenIds = new Set();
     const debugDetail = [];
+    const queryCount = expandedQueries.length;
+    const { perQueryLimit, totalLimit } = computeSearchBudget(queryCount);
+
+    log('S4-BUDGET', `Queries=${queryCount}, perQuery=${perQueryLimit}, totalCap=${totalLimit}`);
 
     // Run all queries in parallel (each does embed + sparse + search)
     const queryPromises = expandedQueries.map(async (expandedQuery, qi) => {
@@ -31,7 +53,7 @@ async function searchAll(expandedQueries, log) {
         }
 
         // Stage 4: Cross-collection hybrid search
-        const results = await searchAllCollections(embedding, sparseVector);
+        const results = await searchAllCollections(embedding, sparseVector, perQueryLimit);
         const byCol = {};
         results.forEach(r => { byCol[r.collection] = (byCol[r.collection] || 0) + 1; });
         log('S4-SEARCH', `Query[${qi}] → ${results.length} results: ${Object.entries(byCol).map(([c, n]) => `${c}:${n}`).join(', ')}`);
@@ -68,10 +90,10 @@ async function searchAll(expandedQueries, log) {
         }
     }
 
-    // Sort by weighted score, take top 30 for reranking
+    // Sort by weighted score and apply global budget cap
     allSearchResults.sort((a, b) => (b.weightedScore || b.score) - (a.weightedScore || a.score));
-    const results = allSearchResults.slice(0, 30);
-    log('S4-MERGE', `Total unique: ${allSearchResults.length}, dupes removed: ${dupeCount}, kept top 30: ${results.length}`);
+    const results = allSearchResults.slice(0, totalLimit);
+    log('S4-MERGE', `Total unique: ${allSearchResults.length}, dupes removed: ${dupeCount}, kept top ${totalLimit}: ${results.length}`);
 
     return { results, debugDetail };
 }

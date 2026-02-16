@@ -23,6 +23,12 @@ Query del usuario
   ├─ Merge carryover + search results + dedup
   │
   ├─ Stage 5b: Reference Expansion ────── Qdrant (fetch por ID, filtrado direccional)
+  │     └─ Refs heredan score del padre × 0.8, global cap 15 refs
+  │
+  ├─ Scoring & Cap ────────────────────── Normaliza scores, ordena, toma top 25
+  │     ├─ Search results: weightedScore original
+  │     ├─ Carryover: score fijo 0.5
+  │     └─ Refs: score heredado del padre × 0.8
   │
   └─ Stage 5: Unified Answer + Eval ───── GPT-5.2 (Principal)
         ├─ Responde la pregunta
@@ -218,7 +224,20 @@ Los resultados se mezclan por `score × weight` y se toman los **top 20**.
 
 2. **Siblings siempre:** Si un artículo tiene varias partes (ej: Art. 308 parte 1, parte 2, parte 3), los siblings del **mismo artículo** siempre se incluyen, independientemente del rango.
 
-3. **Cap por chunk:** Máximo 3 refs por chunk fuente, para evitar explosión en artículos con muchas referencias.
+3. **Cap por chunk:** Máximo 3 refs por chunk fuente.
+
+4. **Score heredado:** Cada ref hereda `parentScore × 0.8` (REF_SCORE_FACTOR). Si un ref es referenciado por múltiples padres, toma el score más alto.
+
+5. **Cap global:** Máximo 15 refs totales (MAX_TOTAL_REFS). Se ordenan por score heredado desc y se cortan las de menor score.
+
+### Cap de chunks totales al modelo (MAX_CHUNKS_TO_MODEL = 25)
+
+Después de S5b, todos los chunks (carryover + search + refs) se puntúan con `_score` normalizado:
+- **Search results:** su `weightedScore` original (0-1)
+- **Carryover:** score fijo 0.5 (fueron USED en el turno anterior)
+- **Refs:** score heredado del padre × 0.8
+
+Se ordenan por `_score` descendente y se toman los **top 25**. En retry NEED se permite hasta 30 (25+5).
 
 ---
 
@@ -313,7 +332,7 @@ Si GPT-5.2 incluye líneas NEED, hay dos modos:
 - **`NEED|art|ley`** (artículo específico): fetch por filtro de metadatos + embedding semántico fallback
 - **`NEED|query`** (búsqueda libre): ejecuta el pipeline de búsqueda completo (S2-S4) con esa query
 
-En ambos casos, si se obtienen chunks nuevos, se añaden al contexto y se re-llama a GPT-5.2 (máximo 1 retry).
+En ambos casos, si se obtienen chunks nuevos, se puntúan, se añaden al contexto, se re-ordena por score y se aplica un soft-cap de MAX_CHUNKS_TO_MODEL + 5 (30). Se re-llama a GPT-5.2 (máximo 1 retry).
 
 ### Lógica DROP (carryover)
 

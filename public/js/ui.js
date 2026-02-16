@@ -6,6 +6,12 @@ import { Config } from './config.js';
 export const UI = {
     elements: {},
 
+    refreshIcons() {
+        if (window.lucide?.createIcons) {
+            window.lucide.createIcons();
+        }
+    },
+
     init() {
         this.elements = {
             chat: document.getElementById('chat'),
@@ -31,6 +37,8 @@ export const UI = {
             keyGroupRag: document.getElementById('key-group-rag'),
             systemPromptGroup: document.getElementById('system-prompt-group'),
         };
+
+        this.refreshIcons();
     },
 
     // ==================== Status ====================
@@ -139,10 +147,12 @@ export const UI = {
             el.innerHTML = `
                 <div class="hi-title">${title}</div>
                 <div class="hi-meta">${nMsgs} msgs</div>
-                <button class="hi-del" data-id="${conv.id}" title="Eliminar">✕</button>
+                <button class="hi-del" data-id="${conv.id}" title="Eliminar" aria-label="Eliminar conversación"><i data-lucide="x"></i></button>
             `;
             container.appendChild(el);
         }
+
+        this.refreshIcons();
     },
 
     // ==================== Attachments preview ====================
@@ -160,14 +170,15 @@ export const UI = {
             el.dataset.idx = i;
 
             if (att.type === 'image') {
-                el.innerHTML = `<img src="${att.data}" alt=""><span>${att.name}</span><button data-idx="${i}">✕</button>`;
+                el.innerHTML = `<img src="${att.data}" alt=""><span>${att.name}</span><button data-idx="${i}" aria-label="Quitar adjunto"><i data-lucide="x"></i></button>`;
             } else {
                 const size = att.data.length > 1000 ? Math.round(att.data.length / 1024) + 'KB' : att.data.length + 'B';
-                el.innerHTML = `<span class="file-icon">📄</span><span>${att.name} (${size})</span><button data-idx="${i}">✕</button>`;
+                el.innerHTML = `<span class="file-icon">📄</span><span>${att.name} (${size})</span><button data-idx="${i}" aria-label="Quitar adjunto"><i data-lucide="x"></i></button>`;
             }
             area.appendChild(el);
         }
         area.style.display = 'flex';
+        this.refreshIcons();
     },
 
     clearPreviews() {
@@ -193,7 +204,7 @@ export const UI = {
                 inner += '</div>';
             }
             inner += `<span>${this.escapeHtml(text)}</span></div>`;
-            inner += `<div class="msg-actions"><button data-action="edit" data-idx="${msgIdx}" title="Editar">✎</button></div>`;
+            inner += `<div class="msg-actions"><button data-action="edit" data-idx="${msgIdx}" title="Editar" aria-label="Editar"><i data-lucide="pencil"></i></button></div>`;
             div.innerHTML = inner;
         } else if (role === 'assistant') {
             let inner = '';
@@ -205,8 +216,8 @@ export const UI = {
             inner += `<div class="content">${this.formatContent(text)}</div>`;
             if (meta) inner += `<div class="msg-meta">${meta}</div>`;
             inner += `<div class="msg-actions">
-                <button data-action="regenerate" title="Regenerar">🔄</button>
-                <button data-action="copy" title="Copiar todo">📋</button>
+                <button data-action="regenerate" title="Regenerar" aria-label="Regenerar"><i data-lucide="rotate-cw"></i></button>
+                <button data-action="copy" title="Copiar todo" aria-label="Copiar"><i data-lucide="clipboard"></i></button>
             </div>`;
             div.innerHTML = inner;
         } else {
@@ -214,6 +225,7 @@ export const UI = {
         }
 
         this.elements.chat.appendChild(div);
+        this.refreshIcons();
         this.scrollToBottom();
         return div;
     },

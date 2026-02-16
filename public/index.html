@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Consultas internas</title>
     <link rel="stylesheet" href="css/styles.css">
+    <script src="https://unpkg.com/lucide@latest"></script>
 </head>
 <body>
 
@@ -14,9 +15,9 @@
 <!-- LEFT SIDEBAR -->
 <aside class="sidebar" id="sidebar">
     <div class="sidebar-header">
-        <span class="app-icon">🤖</span>
+        <span class="app-icon" aria-hidden="true"><i data-lucide="bot"></i></span>
         <h1>Consultas internas</h1>
-        <button class="sidebar-close" id="btn-close-sidebar">✕</button>
+        <button class="sidebar-close" id="btn-close-sidebar" aria-label="Cerrar menú"><i data-lucide="x"></i></button>
     </div>
 
     <!-- Status -->
@@ -27,9 +28,9 @@
 
     <!-- Action buttons -->
     <div class="sidebar-actions">
-        <button class="action-btn primary" id="btn-new-chat">➕ Nueva</button>
-        <button class="action-btn" id="btn-test">⚡ Test</button>
-        <button class="action-btn" id="btn-export">💾</button>
+        <button class="action-btn primary" id="btn-new-chat"><i data-lucide="plus"></i> Nueva</button>
+        <button class="action-btn" id="btn-test"><i data-lucide="zap"></i> Test</button>
+        <button class="action-btn" id="btn-export"><i data-lucide="download"></i></button>
     </div>
 
     <!-- Config (collapsible) -->
@@ -69,7 +70,7 @@
 
     <!-- Footer -->
     <div class="sidebar-footer">
-        <button class="action-btn danger" id="btn-clear-history">🗑 Borrar todo</button>
+        <button class="action-btn danger" id="btn-clear-history"><i data-lucide="trash-2"></i> Borrar todo</button>
     </div>
 </aside>
 
@@ -77,7 +78,7 @@
 <main class="main">
     <!-- Mobile top bar -->
     <div class="mobile-bar">
-        <button id="btn-toggle-sidebar">☰</button>
+        <button id="btn-toggle-sidebar" aria-label="Abrir menú"><i data-lucide="panel-left"></i></button>
         <span>Consultas internas</span>
     </div>
 
@@ -86,12 +87,12 @@
 
     <div id="input-area">
         <div id="preview-area"></div>
-        <div class="input-row">
-            <button class="attach-btn" id="btn-attach" title="Adjuntar archivo o imagen">📎</button>
+        <div class="input-row composer-shell">
+            <button class="attach-btn" id="btn-attach" title="Adjuntar archivo o imagen" aria-label="Adjuntar"><i data-lucide="paperclip"></i></button>
             <input type="file" id="file-input" multiple accept="image/*,.txt,.js,.py,.ts,.json,.csv,.xml,.html,.css,.md,.log,.sql,.yaml,.yml,.sh,.bat,.ps1,.jsx,.tsx,.c,.cpp,.h,.java,.cs,.go,.rs,.rb,.php,.swift,.kt" style="display:none">
             <textarea id="user-input" rows="1" placeholder="Escribe un mensaje... (Ctrl+V para pegar imagen)" disabled></textarea>
-            <button id="btn-send" disabled>
-                <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            <button id="btn-send" disabled aria-label="Enviar mensaje">
+                <i data-lucide="send-horizontal"></i>
             </button>
         </div>
     </div>

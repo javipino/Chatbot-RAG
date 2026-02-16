@@ -2,10 +2,87 @@
 
 const { httpsRequest } = require('./http');
 const {
-    READER_ENDPOINT, READER_KEY,
-    PRINCIPAL_ENDPOINT, PRINCIPAL_KEY,
-    EMBEDDING_DEPLOYMENT, NANO_DEPLOYMENT, GPT52_DEPLOYMENT,
+    getStageModelProfile,
 } = require('../config');
+
+function extractMessageContent(content) {
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+        return content
+            .map(part => {
+                if (typeof part === 'string') return part;
+                if (part && typeof part.text === 'string') return part.text;
+                if (part && typeof part.content === 'string') return part.content;
+                return '';
+            })
+            .join('')
+            .trim();
+    }
+    if (content && typeof content.text === 'string') return content.text;
+    return '';
+}
+
+async function callChatWithProfile(profile, messages) {
+    if (!profile || !profile.type) {
+        throw new Error('Invalid chat model profile');
+    }
+
+    if (profile.type === 'azure-deployment-chat') {
+        const result = await httpsRequest({
+            hostname: profile.endpoint,
+            path: `/openai/deployments/${profile.deployment}/chat/completions?api-version=${profile.apiVersion}`,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'api-key': profile.apiKey },
+        }, { messages });
+        return extractMessageContent(result.choices?.[0]?.message?.content);
+    }
+
+    if (profile.type === 'foundry-model-chat') {
+        const result = await httpsRequest({
+            hostname: profile.endpoint,
+            path: `/models/chat/completions?api-version=${profile.apiVersion}`,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'api-key': profile.apiKey },
+        }, {
+            model: profile.model,
+            messages,
+        });
+        return extractMessageContent(result.choices?.[0]?.message?.content);
+    }
+
+    throw new Error(`Unsupported chat profile type: ${profile.type}`);
+}
+
+async function embedWithProfile(profile, text) {
+    if (!profile || !profile.type) {
+        throw new Error('Invalid embedding model profile');
+    }
+
+    if (profile.type === 'azure-deployment-embeddings') {
+        const result = await httpsRequest({
+            hostname: profile.endpoint,
+            path: `/openai/deployments/${profile.deployment}/embeddings?api-version=${profile.apiVersion}`,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'api-key': profile.apiKey },
+        }, { input: text });
+        return result.data?.[0]?.embedding;
+    }
+
+    if (profile.type === 'foundry-model-embeddings') {
+        const result = await httpsRequest({
+            hostname: profile.endpoint,
+            path: `/models/embeddings?api-version=${profile.apiVersion}`,
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'api-key': profile.apiKey },
+        }, {
+            model: profile.model,
+            input: text,
+        });
+        return result.data?.[0]?.embedding;
+    }
+
+    throw new Error(`Unsupported embedding profile type: ${profile.type}`);
+}
 
 /**
  * Embed text using text-embedding-3-small (Reader endpoint)
@@ -13,13 +90,12 @@ const {
  * @returns {Promise<number[]>} 1536-dim embedding
  */
 async function embed(text) {
-    const result = await httpsRequest({
-        hostname: READER_ENDPOINT,
-        path: `/openai/deployments/${EMBEDDING_DEPLOYMENT}/embeddings?api-version=2023-05-15`,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY },
-    }, { input: text });
-    return result.data[0].embedding;
+    const profile = getStageModelProfile('embedding');
+    const embedding = await embedWithProfile(profile, text);
+    if (!Array.isArray(embedding)) {
+        throw new Error(`Invalid embedding response from profile "${profile.id}"`);
+    }
+    return embedding;
 }
 
 /**
@@ -28,13 +104,8 @@ async function embed(text) {
  * @returns {Promise<string>} response content
  */
 async function callNano(messages) {
-    const result = await httpsRequest({
-        hostname: READER_ENDPOINT,
-        path: `/openai/deployments/${NANO_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': READER_KEY },
-    }, { messages });
-    return result.choices?.[0]?.message?.content || '';
+    const profile = getStageModelProfile('expand');
+    return callChatWithProfile(profile, messages);
 }
 
 /**
@@ -43,13 +114,8 @@ async function callNano(messages) {
  * @returns {Promise<string>} response content
  */
 async function callGPT52(messages) {
-    const result = await httpsRequest({
-        hostname: PRINCIPAL_ENDPOINT,
-        path: `/openai/deployments/${GPT52_DEPLOYMENT}/chat/completions?api-version=2025-01-01-preview`,
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'api-key': PRINCIPAL_KEY },
-    }, { messages });
-    return result.choices?.[0]?.message?.content || '';
+    const profile = getStageModelProfile('answer');
+    return callChatWithProfile(profile, messages);
 }
 
 /**

@@ -51,9 +51,10 @@ function copyCode(btn) {
     const code = pre.querySelector('code');
     navigator.clipboard.writeText(code ? code.textContent : pre.textContent)
         .then(() => {
-            btn.textContent = 'Copiado!';
+            btn.textContent = 'Copiado';
             btn.classList.add('copied');
-            setTimeout(() => { btn.textContent = 'Copiar'; btn.classList.remove('copied'); }, 1500);
+            setTimeout(() => { btn.textContent = 'Copiar'; btn.classList.remove('copied'); UI.refreshIcons(); }, 1500);
+            UI.refreshIcons();
         });
 }
 
@@ -61,7 +62,14 @@ function copyFullMessage(btn) {
     const contentDiv = btn.closest('.msg').querySelector('.content');
     if (!contentDiv) return;
     navigator.clipboard.writeText(contentDiv.textContent)
-        .then(() => { btn.innerHTML = '✅'; setTimeout(() => { btn.innerHTML = '📋'; }, 1500); });
+        .then(() => {
+            btn.innerHTML = '<i data-lucide="check"></i>';
+            UI.refreshIcons();
+            setTimeout(() => {
+                btn.innerHTML = '<i data-lucide="clipboard"></i>';
+                UI.refreshIcons();
+            }, 1500);
+        });
 }
 
 function toggleThinking(toggle) {
