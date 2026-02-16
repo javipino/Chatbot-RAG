@@ -13,6 +13,8 @@ export const Chat = {
     pendingAttachments: [],
     isLoading: false,
     ragChunkIds: [],  // carryover: chunk IDs from last RAG response
+    MAX_ATTACHMENT_BYTES: 8 * 1024 * 1024,
+    MAX_ATTACHMENT_CHARS: 20000,
 
     init() {
         const config = Storage.loadConfig();
@@ -133,23 +135,114 @@ export const Chat = {
         UI.clearPreviews();
     },
 
-    handleFiles(files) {
-        for (const file of files) {
-            if (file.type.indexOf('image') === 0) this.readAsDataURL(file);
-            else this.readAsText(file);
+    async handleFiles(files) {
+        const list = Array.from(files || []);
+        for (const file of list) {
+            try {
+                const attachment = await this.buildAttachment(file);
+                if (attachment) this.addAttachment(attachment);
+            } catch (err) {
+                UI.addMessage('error', `No se pudo procesar "${file.name}": ${err.message}`);
+            }
         }
     },
 
+    isTextLikeFile(file) {
+        const textExts = [
+            '.txt', '.md', '.csv', '.json', '.xml', '.html', '.css', '.js', '.ts', '.jsx', '.tsx',
+            '.py', '.java', '.cs', '.go', '.rs', '.rb', '.php', '.swift', '.kt', '.sql', '.yaml',
+            '.yml', '.sh', '.bat', '.ps1', '.log', '.c', '.cpp', '.h', '.rtf'
+        ];
+        const lower = file.name.toLowerCase();
+        return file.type.startsWith('text/') || textExts.some(ext => lower.endsWith(ext));
+    },
+
+    isPdfFile(file) {
+        const lower = file.name.toLowerCase();
+        return file.type === 'application/pdf' || lower.endsWith('.pdf');
+    },
+
+    isDocxFile(file) {
+        const lower = file.name.toLowerCase();
+        return file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || lower.endsWith('.docx');
+    },
+
+    truncateAttachmentText(text, fileName) {
+        const clean = (text || '').replace(/\u0000/g, '').trim();
+        if (clean.length <= this.MAX_ATTACHMENT_CHARS) return clean;
+        const head = clean.substring(0, this.MAX_ATTACHMENT_CHARS);
+        return `${head}\n\n[... contenido truncado de ${fileName}: ${clean.length - this.MAX_ATTACHMENT_CHARS} caracteres omitidos ...]`;
+    },
+
+    async buildAttachment(file) {
+        if (file.size > this.MAX_ATTACHMENT_BYTES) {
+            throw new Error(`archivo demasiado grande (${Math.round(file.size / 1024 / 1024)}MB). Máximo: 8MB`);
+        }
+
+        if (file.type.indexOf('image') === 0) {
+            const data = await this.readAsDataURL(file);
+            return { type: 'image', name: file.name, data };
+        }
+
+        if (this.isPdfFile(file)) {
+            const text = await this.readPdfAsText(file);
+            return { type: 'text', name: file.name, data: this.truncateAttachmentText(text, file.name) };
+        }
+
+        if (this.isDocxFile(file)) {
+            const text = await this.readDocxAsText(file);
+            return { type: 'text', name: file.name, data: this.truncateAttachmentText(text, file.name) };
+        }
+
+        if (this.isTextLikeFile(file)) {
+            const text = await this.readAsText(file);
+            return { type: 'text', name: file.name, data: this.truncateAttachmentText(text, file.name) };
+        }
+
+        throw new Error('formato no soportado (usa txt, md, csv, json, code, pdf, docx, rtf o imágenes)');
+    },
+
     readAsDataURL(file) {
-        const reader = new FileReader();
-        reader.onload = (e) => this.addAttachment({ type: 'image', name: file.name, data: e.target.result });
-        reader.readAsDataURL(file);
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result);
+            reader.onerror = () => reject(new Error('error leyendo imagen'));
+            reader.readAsDataURL(file);
+        });
     },
 
     readAsText(file) {
-        const reader = new FileReader();
-        reader.onload = (e) => this.addAttachment({ type: 'text', name: file.name, data: e.target.result });
-        reader.readAsText(file);
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target.result || '');
+            reader.onerror = () => reject(new Error('error leyendo archivo de texto'));
+            reader.readAsText(file);
+        });
+    },
+
+    async readPdfAsText(file) {
+        if (!window.pdfjsLib) throw new Error('PDF parser no disponible');
+        const arrayBuffer = await file.arrayBuffer();
+        const loadingTask = window.pdfjsLib.getDocument({ data: arrayBuffer });
+        const pdf = await loadingTask.promise;
+
+        const pages = [];
+        for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+            const page = await pdf.getPage(pageNum);
+            const textContent = await page.getTextContent();
+            const text = textContent.items.map(item => item.str).join(' ').replace(/\s+/g, ' ').trim();
+            if (text) pages.push(`[Página ${pageNum}] ${text}`);
+        }
+
+        if (pages.length === 0) return '[PDF sin texto extraíble o escaneado como imagen]';
+        return pages.join('\n\n');
+    },
+
+    async readDocxAsText(file) {
+        if (!window.mammoth) throw new Error('DOCX parser no disponible');
+        const arrayBuffer = await file.arrayBuffer();
+        const result = await window.mammoth.extractRawText({ arrayBuffer });
+        return result.value?.trim() || '[DOCX sin texto extraíble]';
     },
 
     // ==================== Message sending ====================

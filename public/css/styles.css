@@ -808,7 +808,7 @@ body {
 .input-row {
     display: flex;
     gap: 6px;
-    align-items: flex-end;
+    align-items: center;
 }
 
 .composer-shell {
@@ -932,6 +932,7 @@ body {
         max-width: 100%;
         min-height: 0; /* crucial: allows flexbox child to shrink below content size */
         flex: 1 1 0; /* grow, shrink, zero basis — prevents content from pushing input off screen */
+        padding-bottom: 110px; /* reserve space for fixed composer */
     }
 
     .typing {
@@ -940,12 +941,16 @@ body {
 
     #input-area {
         padding: 8px 10px max(10px, env(safe-area-inset-bottom, 10px));
-        max-width: 100%;
-        flex-shrink: 0;
-        position: sticky;
+        width: 100%;
+        max-width: none;
+        margin: 0;
+        position: fixed;
+        left: 0;
+        right: 0;
         bottom: 0;
         background: #1e1e1e;
         backdrop-filter: blur(2px);
+        z-index: 30;
     }
 
     .input-row {
@@ -956,6 +961,7 @@ body {
         padding: 10px 14px;
         font-size: 16px; /* prevents iOS auto-zoom on focus */
         min-height: 44px;
+        line-height: 1.35;
     }
 
     .attach-btn,

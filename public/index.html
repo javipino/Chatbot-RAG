@@ -89,8 +89,8 @@
         <div id="preview-area"></div>
         <div class="input-row composer-shell">
             <button class="attach-btn" id="btn-attach" title="Adjuntar archivo o imagen" aria-label="Adjuntar"><i data-lucide="paperclip"></i></button>
-            <input type="file" id="file-input" multiple accept="image/*,.txt,.js,.py,.ts,.json,.csv,.xml,.html,.css,.md,.log,.sql,.yaml,.yml,.sh,.bat,.ps1,.jsx,.tsx,.c,.cpp,.h,.java,.cs,.go,.rs,.rb,.php,.swift,.kt" style="display:none">
-            <textarea id="user-input" rows="1" placeholder="Escribe un mensaje... (Ctrl+V para pegar imagen)" disabled></textarea>
+            <input type="file" id="file-input" multiple accept="image/*,.txt,.js,.py,.ts,.json,.csv,.xml,.html,.css,.md,.log,.sql,.yaml,.yml,.sh,.bat,.ps1,.jsx,.tsx,.c,.cpp,.h,.java,.cs,.go,.rs,.rb,.php,.swift,.kt,.pdf,.docx,.rtf" style="display:none">
+            <textarea id="user-input" rows="1" placeholder="Escribe un mensaje..." disabled></textarea>
             <button id="btn-send" disabled aria-label="Enviar mensaje">
                 <i data-lucide="send-horizontal"></i>
             </button>
@@ -99,6 +99,13 @@
 </main>
 
 <!-- Single module entry point -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+    if (window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+</script>
+<script src="https://unpkg.com/mammoth@1.8.0/mammoth.browser.min.js"></script>
 <script type="module" src="js/app.js"></script>
 
 </body>

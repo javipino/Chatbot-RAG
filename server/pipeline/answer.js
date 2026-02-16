@@ -23,6 +23,12 @@ const ANSWER_WRAPPER = `INSTRUCCIONES DE FORMATO DE RESPUESTA:
 
 Responde a la pregunta del usuario usando los fragmentos de normativa proporcionados.
 
+Reglas de coherencia (OBLIGATORIAS):
+- Mantén una única conclusión principal y no la contradigas en párrafos posteriores.
+- Si la respuesta depende de condiciones, exprésalas como escenarios separados ("Si A...", "Si B...") y termina con una conclusión final consistente.
+- Si no puedes concluir con seguridad por falta de contexto normativo/fáctico, NO inventes: usa NEED.
+- Antes de escribir ===META===, revisa que tu conclusión final no contradiga ninguna frase anterior.
+
 Tu respuesta DEBE tener EXACTAMENTE estas dos secciones, separadas por el delimitador:
 
 1. Primero tu respuesta completa al usuario.

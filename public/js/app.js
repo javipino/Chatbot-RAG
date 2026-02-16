@@ -145,12 +145,22 @@ function bindEvents() {
         Chat.handleFiles(e.dataTransfer.files);
     });
 
-    UI.elements.historyList.addEventListener('click', (e) => {
+    let lastHistorySelectTs = 0;
+    const handleHistorySelect = (e) => {
+        if (Date.now() - lastHistorySelectTs < 250) return;
+        lastHistorySelectTs = Date.now();
         const deleteBtn = e.target.closest('.hi-del');
         if (deleteBtn) { e.stopPropagation(); Chat.deleteConversation(deleteBtn.dataset.id); return; }
         const item = e.target.closest('.history-item');
-        if (item) Chat.loadConversation(item.dataset.id);
-    });
+        if (item) {
+            e.preventDefault();
+            Chat.loadConversation(item.dataset.id);
+        }
+    };
+
+    UI.elements.historyList.addEventListener('click', handleHistorySelect);
+    UI.elements.historyList.addEventListener('pointerup', handleHistorySelect);
+    UI.elements.historyList.addEventListener('touchend', handleHistorySelect, { passive: false });
 
     UI.elements.previewArea.addEventListener('click', (e) => {
         const btn = e.target.closest('button');
