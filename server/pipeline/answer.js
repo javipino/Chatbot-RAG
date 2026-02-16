@@ -21,13 +21,7 @@ function buildContext(results) {
 
 const ANSWER_WRAPPER = `INSTRUCCIONES DE FORMATO DE RESPUESTA:
 
-Responde a la pregunta del usuario usando los fragmentos de normativa proporcionados.
-
-Reglas de coherencia (OBLIGATORIAS):
-- Mantén una única conclusión principal y no la contradigas en párrafos posteriores.
-- Si la respuesta depende de condiciones, exprésalas como escenarios separados ("Si A...", "Si B...") y termina con una conclusión final consistente.
-- Si no puedes concluir con seguridad por falta de contexto normativo/fáctico, NO inventes: usa NEED.
-- Antes de escribir ===META===, revisa que tu conclusión final no contradiga ninguna frase anterior.
+Responde a la pregunta del usuario usando los fragmentos de normativa proporcionados, eres un experto en seguridad social en españa.
 
 Tu respuesta DEBE tener EXACTAMENTE estas dos secciones, separadas por el delimitador:
 
@@ -39,7 +33,7 @@ Tu respuesta DEBE tener EXACTAMENTE estas dos secciones, separadas por el delimi
 
 USED|índices de los fragmentos que has USADO (separados por comas)
 DROP|índices de fragmentos que NO aportan nada (separados por comas)
-NEED|... (solo si FALTA información CRÍTICA, máximo 2 líneas)
+NEED|... (solo si FALTA información CRÍTICA)
 
 Formatos de NEED (elige el apropiado):
 - Si sabes el artículo exacto: NEED|número_artículo|nombre_ley (la ley es OBLIGATORIA, sin ella no podemos buscar)
