@@ -71,14 +71,23 @@ let _vocab = null;
 
 function loadVocabulary() {
     if (_vocab) return _vocab;
-    try {
-        const vocabPath = path.join(__dirname, '..', 'data', 'tfidf_vocabulary.json');
-        _vocab = JSON.parse(fs.readFileSync(vocabPath, 'utf-8'));
-        return _vocab;
-    } catch (e) {
-        console.warn('Warning: Could not load TF-IDF vocabulary:', e.message);
-        return null;
+
+    const candidates = [
+        path.join(__dirname, '..', 'data', 'tfidf_vocabulary.json'),
+        path.join(__dirname, '..', '..', 'data', 'tfidf_vocabulary.json'),
+    ];
+
+    for (const vocabPath of candidates) {
+        try {
+            _vocab = JSON.parse(fs.readFileSync(vocabPath, 'utf-8'));
+            return _vocab;
+        } catch {
+            // Try next candidate path
+        }
     }
+
+    console.warn('Warning: Could not load TF-IDF vocabulary from expected paths');
+    return null;
 }
 
 /**

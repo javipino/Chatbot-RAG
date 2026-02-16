@@ -37,6 +37,8 @@ Thumbs.db
 # Data files (chunks, sentencias, vocabularies, PDFs)
 data/
 *.pdf
+!server/data/
+!server/data/tfidf_vocabulary.json
 
 # Temporary files
 *.tmp
