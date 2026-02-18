@@ -5,6 +5,7 @@ const path = require('path');
 
 const chatRouter = require('./routes/chat');
 const ragRouter = require('./routes/rag');
+const transcribeRouter = require('./routes/transcribe');
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -15,6 +16,7 @@ app.use(express.json({ limit: '100kb' }));
 // ── API Routes (before static so /api/* isn't caught by static middleware) ──
 app.use('/api/chat', chatRouter);
 app.use('/api/rag', ragRouter);
+app.use('/api/transcribe', transcribeRouter);
 
 // ── Static files (frontend) ──
 app.use(express.static(path.join(__dirname, '..', 'public')));
