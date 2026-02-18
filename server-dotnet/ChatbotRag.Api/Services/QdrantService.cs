@@ -92,7 +92,23 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
     /// <summary>Fetch chunks by point IDs from normativa collection.</summary>
     public async Task<List<ChunkResult>> FetchChunksByIdsAsync(IEnumerable<object> ids)
     {
-        var idList = ids.ToList();
+        // Normalize IDs to long — Qdrant requires integer point IDs, not strings or JsonElement
+        var idList = ids
+            .Select(id => id switch
+            {
+                long l => (object)l,
+                int i => (object)(long)i,
+                ulong u => (object)(long)u,
+                System.Text.Json.JsonElement je when je.ValueKind == System.Text.Json.JsonValueKind.Number
+                    => (object)je.GetInt64(),
+                _ when long.TryParse(id?.ToString(), out var parsed) => (object)parsed,
+                _ => null
+            })
+            .Where(id => id != null)
+            .Cast<object>()
+            .Distinct()
+            .ToList();
+
         if (idList.Count == 0) return [];
 
         var body = new QdrantFetchRequest { Ids = idList, WithPayload = true, WithVector = false };

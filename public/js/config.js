@@ -33,12 +33,6 @@ export const Config = {
             path: '/openai/v1/chat/completions',
         },
         {
-            id: 'ss-expert',
-            name: 'SS Expert (RAG)',
-            provider: 'rag',
-            format: 'rag',
-        },
-        {
             id: 'ss-expert-pipeline',
             name: 'SS Expert .NET Pipeline',
             provider: 'rag',
