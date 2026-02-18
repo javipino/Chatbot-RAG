@@ -27,14 +27,20 @@ jobs:
         run: |
           dotnet publish server-dotnet/ChatbotRag.Api/ChatbotRag.Api.csproj \
             -c Release \
-            -o ./publish \
-            --no-self-contained \
-            -r linux-x64
+            -o ./publish
 
       - name: Copy frontend assets
         run: |
           mkdir -p publish/wwwroot
           cp -r public/. publish/wwwroot/
+
+      - name: Create Oryx manifest (helps App Service startup script generator)
+        run: |
+          cat > publish/oryx-manifest.toml << 'EOF'
+          PlatformName = "dotnet"
+          PlatformVersion = "10.0"
+          OperationID = "dotnet-chatbotrag"
+          EOF
 
       - name: Create deployment package
         run: |
