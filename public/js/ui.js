@@ -239,6 +239,76 @@ export const UI = {
         if (msgs.length > 0) msgs[msgs.length - 1].remove();
     },
 
+    // ==================== Streaming messages ====================
+
+    /** Create an empty assistant bubble ready to receive streaming tokens. */
+    addStreamingMessage() {
+        const div = document.createElement('div');
+        div.className = 'msg assistant streaming';
+        div.innerHTML = '<div class="content streaming-content"></div>';
+        this.elements.chat.appendChild(div);
+        this.scrollToBottom();
+        return div;
+    },
+
+    /** Append accumulated text to a streaming bubble (replaces content each call). */
+    appendStreamingToken(msgDiv, accumulated) {
+        const content = msgDiv.querySelector('.streaming-content');
+        if (content) {
+            content.innerHTML = this.formatContent(accumulated);
+            this.scrollToBottom();
+        }
+    },
+
+    /** Show a tool-activity indicator inside a streaming bubble. */
+    showToolActivity(msgDiv, toolName) {
+        let indicator = msgDiv.querySelector('.tool-activity');
+        if (!indicator) {
+            indicator = document.createElement('div');
+            indicator.className = 'tool-activity';
+            msgDiv.insertBefore(indicator, msgDiv.firstChild);
+        }
+        const labels = {
+            search_normativa: '🔍 Buscando en normativa...',
+            search_sentencias: '⚖️ Buscando en sentencias...',
+            get_article: '📄 Recuperando artículo...',
+            get_related_chunks: '🔗 Buscando chunks relacionados...',
+        };
+        indicator.textContent = labels[toolName] || `🔍 ${toolName}...`;
+    },
+
+    /** Remove tool-activity indicator from a streaming bubble. */
+    hideToolActivity(msgDiv) {
+        msgDiv.querySelector('.tool-activity')?.remove();
+    },
+
+    /** Finalize a streaming bubble: replace content class and add meta/actions. */
+    finalizeStreamingMessage(msgDiv, finalText, meta) {
+        msgDiv.classList.remove('streaming');
+        this.hideToolActivity(msgDiv);
+        const contentDiv = msgDiv.querySelector('.streaming-content');
+        if (contentDiv) {
+            contentDiv.classList.remove('streaming-content');
+            contentDiv.classList.add('content');
+            contentDiv.innerHTML = this.formatContent(finalText);
+        }
+        if (meta) {
+            const metaDiv = document.createElement('div');
+            metaDiv.className = 'msg-meta';
+            metaDiv.textContent = meta;
+            msgDiv.appendChild(metaDiv);
+        }
+        const actions = document.createElement('div');
+        actions.className = 'msg-actions';
+        actions.innerHTML = `
+            <button data-action="regenerate" title="Regenerar" aria-label="Regenerar"><i data-lucide="rotate-cw"></i></button>
+            <button data-action="copy" title="Copiar todo" aria-label="Copiar"><i data-lucide="clipboard"></i></button>
+        `;
+        msgDiv.appendChild(actions);
+        this.refreshIcons();
+        this.scrollToBottom();
+    },
+
     // ==================== Edit mode ====================
 
     enterEditMode(msgDiv, originalText, onSave, onCancel) {

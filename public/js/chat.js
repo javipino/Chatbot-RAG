@@ -12,7 +12,9 @@ export const Chat = {
     systemPrompt: '',
     pendingAttachments: [],
     isLoading: false,
-    ragChunkIds: [],  // carryover: chunk IDs from last RAG response
+    ragChunkIds: [],  // carryover: chunk IDs from last RAG response (Node pipeline)
+    dotnetRagChunkIds: [],  // carryover for .NET pipeline
+    threadId: null,   // agent thread ID for .NET agent mode
     MAX_ATTACHMENT_BYTES: 8 * 1024 * 1024,
     MAX_ATTACHMENT_CHARS: 20000,
 
@@ -60,6 +62,8 @@ export const Chat = {
         this.conversationHistory = conv.messages || [];
         this.currentConvId = id;
         this.ragChunkIds = [];  // reset carryover when switching conversations
+        this.dotnetRagChunkIds = [];
+        this.threadId = null;
         Storage.setCurrentConvId(id);
         this.rebuildChat();
         this.renderHistoryList();
@@ -81,6 +85,8 @@ export const Chat = {
         this.conversationHistory = [];
         this.currentConvId = null;
         this.ragChunkIds = [];
+        this.dotnetRagChunkIds = [];
+        this.threadId = null;
         UI.clearChat();
         this.clearAttachments();
         this.renderHistoryList();
@@ -290,6 +296,13 @@ export const Chat = {
         UI.scrollToBottom();
 
         const startTime = Date.now();
+
+        // .NET streaming endpoints
+        if (preset.format === 'rag-pipeline' || preset.format === 'rag-agent') {
+            await this._doSendStreaming(preset, apiKey, startTime);
+            return;
+        }
+
         try {
             const data = await API.call(this.conversationHistory, preset, apiKey, this.systemPrompt, this.ragChunkIds);
             const result = API.extractResponse(data);
@@ -304,6 +317,77 @@ export const Chat = {
             this.conversationHistory.push({ role: 'assistant', content: result.text });
             this.saveCurrentConversation();
         } catch (err) {
+            UI.addMessage('error', err.message);
+        }
+
+        UI.showTyping(false);
+        this.isLoading = false;
+        UI.enableInput(true);
+        UI.focusInput();
+        UI.scrollToBottom();
+    },
+
+    async _doSendStreaming(preset, apiKey, startTime) {
+        // Create the assistant message bubble immediately (streaming into it)
+        const msgDiv = UI.addStreamingMessage();
+
+        let accumulated = '';
+        let toolActivity = null;
+
+        try {
+            await API.callStreaming(preset, apiKey, this.conversationHistory, {
+                ragChunkIds: this.dotnetRagChunkIds,
+                threadId: this.threadId,
+
+                onToken: (text) => {
+                    accumulated += text;
+                    UI.appendStreamingToken(msgDiv, accumulated);
+                    if (toolActivity) {
+                        UI.hideToolActivity(msgDiv);
+                        toolActivity = null;
+                    }
+                },
+
+                onToolStatus: (toolName, args) => {
+                    toolActivity = toolName;
+                    UI.showToolActivity(msgDiv, toolName);
+                },
+
+                onDone: (data) => {
+                    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+                    const meta = `${preset.name} · ${elapsed}s`;
+
+                    // Save carryover
+                    if (data.contextChunkIds) this.dotnetRagChunkIds = data.contextChunkIds;
+                    if (data.threadId) this.threadId = data.threadId;
+
+                    // Append sources if present
+                    let finalText = accumulated;
+                    if (data.sources?.length > 0) {
+                        const seen = new Set();
+                        const lines = data.sources
+                            .filter(s => {
+                                const key = `${s.law}|${s.section}`;
+                                if (seen.has(key)) return false;
+                                seen.add(key);
+                                return true;
+                            })
+                            .map(s => `- ${s.law} > ${s.section}`);
+                        if (lines.length) finalText += '\n\n---\n**Fuentes consultadas:**\n' + lines.join('\n');
+                    }
+
+                    UI.finalizeStreamingMessage(msgDiv, finalText, meta);
+                    this.conversationHistory.push({ role: 'assistant', content: finalText });
+                    this.saveCurrentConversation();
+                },
+
+                onError: (msg) => {
+                    UI.finalizeStreamingMessage(msgDiv, accumulated || '(error)', null);
+                    UI.addMessage('error', msg);
+                },
+            });
+        } catch (err) {
+            UI.finalizeStreamingMessage(msgDiv, accumulated || '(error)', null);
             UI.addMessage('error', err.message);
         }
 

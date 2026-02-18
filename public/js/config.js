@@ -38,6 +38,20 @@ export const Config = {
             provider: 'rag',
             format: 'rag',
         },
+        {
+            id: 'ss-expert-pipeline',
+            name: 'SS Expert .NET Pipeline',
+            provider: 'rag',
+            format: 'rag-pipeline',
+            endpoint: '/api/rag-pipeline',
+        },
+        {
+            id: 'ss-expert-agent',
+            name: 'SS Expert .NET Agent',
+            provider: 'rag',
+            format: 'rag-agent',
+            endpoint: '/api/rag-agent',
+        },
     ],
 
     // Storage keys

@@ -720,6 +720,31 @@ body {
     margin-top: 4px;
 }
 
+/* Streaming message indicator */
+.msg.streaming .streaming-content::after {
+    content: '▍';
+    display: inline-block;
+    animation: blink 0.8s step-end infinite;
+    vertical-align: baseline;
+    margin-left: 1px;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
+}
+
+/* Agent tool activity pill */
+.tool-activity {
+    display: inline-block;
+    font-size: 12px;
+    color: #0078d4;
+    background: #e8f0fe;
+    padding: 3px 10px;
+    border-radius: 12px;
+    margin-bottom: 8px;
+}
+
 /* Typing indicator */
 .typing {
     display: none;

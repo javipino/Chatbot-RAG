@@ -11,8 +11,12 @@ export const API = {
         } catch { return text.substring(0, 500); }
     },
 
-    async call(messages, preset, apiKey, systemPrompt = '', ragChunkIds = []) {
+    async call(messages, preset, apiKey, systemPrompt = '', ragChunkIds = [], threadId = null) {
         if (preset.format === 'rag') return this._callRAG(messages, apiKey, ragChunkIds);
+        if (preset.format === 'rag-pipeline' || preset.format === 'rag-agent') {
+            // Streaming — caller must use callStreaming() directly
+            throw new Error('Use API.callStreaming() for rag-pipeline/rag-agent presets');
+        }
 
         if (!apiKey) throw new Error('API key vacía');
 
@@ -40,6 +44,91 @@ export const API = {
             throw new Error(`Error ${response.status}: ${this._parseErrorText(text)}`);
         }
         return response.json();
+    },
+
+    /**
+     * Streaming call for .NET rag-pipeline and rag-agent endpoints.
+     * Parses SSE events and calls callbacks:
+     *   onToken(text)          — partial answer token
+     *   onToolStatus(name, args) — agent tool call started
+     *   onDone(data)           — final event with contextChunkIds / threadId / sources
+     *   onError(msg)           — error event
+     */
+    async callStreaming(preset, apiKey, messages, { ragChunkIds = [], threadId = null, onToken, onToolStatus, onDone, onError } = {}) {
+        const endpoint = preset.endpoint;
+        let body;
+
+        if (preset.format === 'rag-pipeline') {
+            const ragMsgs = messages
+                .filter(m => m.role === 'user' || m.role === 'assistant')
+                .map(m => {
+                    let text = typeof m.content === 'string' ? m.content : '';
+                    if (Array.isArray(m.content)) {
+                        const textPart = m.content.find(p => p.type === 'input_text');
+                        if (textPart) text = textPart.text;
+                    }
+                    return { role: m.role, content: text };
+                });
+            body = { messages: ragMsgs };
+            if (ragChunkIds.length > 0) body.previousChunkIds = ragChunkIds;
+        } else {
+            // rag-agent: only send the last user message + threadId for continuity
+            const lastUser = [...messages].reverse().find(m => m.role === 'user');
+            let text = lastUser ? (typeof lastUser.content === 'string' ? lastUser.content : '') : '';
+            if (lastUser && Array.isArray(lastUser.content)) {
+                const tp = lastUser.content.find(p => p.type === 'input_text');
+                if (tp) text = tp.text;
+            }
+            body = { message: text };
+            if (threadId) body.threadId = threadId;
+        }
+
+        const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey },
+            body: JSON.stringify(body),
+        });
+
+        if (!response.ok) {
+            const text = await response.text();
+            if (onError) onError(`Error ${response.status}: ${this._parseErrorText(text)}`);
+            return;
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process complete SSE events (separated by double newline)
+            let boundary;
+            while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+                const raw = buffer.slice(0, boundary);
+                buffer = buffer.slice(boundary + 2);
+
+                let eventType = 'message';
+                let dataStr = '';
+                for (const line of raw.split('\n')) {
+                    if (line.startsWith('event: ')) eventType = line.slice(7).trim();
+                    else if (line.startsWith('data: ')) dataStr = line.slice(6).trim();
+                }
+                if (!dataStr) continue;
+
+                try {
+                    const parsed = JSON.parse(dataStr);
+                    if (eventType === 'token' && onToken) onToken(parsed.text ?? parsed);
+                    else if (eventType === 'tool_status' && onToolStatus) onToolStatus(parsed.tool, parsed.args);
+                    else if (eventType === 'done' && onDone) onDone(parsed);
+                    else if (eventType === 'error' && onError) onError(parsed.error ?? parsed);
+                } catch {
+                    // non-JSON data line (heartbeat etc) — ignore
+                }
+            }
+        }
     },
 
     async _callRAG(messages, apiKey, previousChunkIds = []) {
