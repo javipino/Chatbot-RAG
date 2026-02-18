@@ -1,8 +1,8 @@
 # Pipeline RAG — Etapas, Modelos y Prompts
 
-> **Código fuente:** `server/pipeline/` (expand.js, search.js, enrich.js, answer.js)
-> **Orquestación:** `server/routes/rag.js`
-> **Servicios:** `server/services/` (openai.js, qdrant.js, tfidf.js, http.js)
+> **Implementación Node.js (legacy):** `server/pipeline/` (expand.js, search.js, enrich.js, answer.js) — orquestada en `server/routes/rag.js`
+> **Implementación .NET 10 (activa):** `server-dotnet/ChatbotRag.Api/Pipeline/` (ExpandStage.cs, SearchStage.cs, EnrichStage.cs, AnswerStage.cs) — orquestada en `Endpoints/RagPipelineEndpoints.cs`
+> **Servicios .NET:** `Services/` (OpenAiService.cs, QdrantService.cs, TfidfService.cs)
 
 ## Resumen del flujo
 
