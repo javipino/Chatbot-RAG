@@ -14,31 +14,31 @@ public class AnswerStage(OpenAiService openAi)
 {
     private const string AnswerWrapper =
         """
-        INSTRUCCIONES DE FORMATO DE RESPUESTA:
+        RESPONSE FORMAT INSTRUCTIONS:
 
-        Responde a la pregunta del usuario usando los fragmentos de normativa proporcionados, eres un experto en seguridad social en españa.
+        Answer the user's question using the provided regulation fragments. You are an expert in Spanish Social Security law.
 
-        Tu respuesta DEBE tener EXACTAMENTE estas dos secciones, separadas por el delimitador:
+        Your response MUST contain EXACTLY these two sections, separated by the delimiter:
 
-        1. Primero tu respuesta completa al usuario.
+        1. First, your complete answer to the user (in Spanish).
 
         ===META===
 
-        2. Después del delimitador, metadata en formato estructurado:
+        2. After the delimiter, structured metadata:
 
-        USED|índices de los fragmentos que has USADO (separados por comas)
-        DROP|índices de fragmentos que NO aportan nada (separados por comas)
-        NEED|... (solo si FALTA información CRÍTICA)
+        USED|indices of fragments you USED (comma-separated)
+        DROP|indices of fragments that were NOT useful (comma-separated)
+        NEED|... (only if CRITICAL information is MISSING)
 
-        Formatos de NEED (elige el apropiado):
-        - Si sabes el artículo exacto: NEED|número_artículo|nombre_ley (la ley es OBLIGATORIA, sin ella no podemos buscar)
-        - Si necesitas información pero no sabes el artículo: NEED|palabras clave de búsqueda
+        NEED formats (choose as appropriate):
+        - If you know the exact article: NEED|article_number|law_name (law is MANDATORY, we cannot search without it)
+        - If you need information but don't know the article: NEED|search keywords
 
-        Reglas para META:
-        - USED y DROP son OBLIGATORIOS. Si todos fueron útiles, pon DROP|ninguno
-        - NEED es OPCIONAL. Solo si realmente falta algo imprescindible.
+        META rules:
+        - USED and DROP are MANDATORY. If all fragments were useful, write DROP|none
+        - NEED is OPTIONAL. Only use it if something truly essential is missing.
 
-        Ejemplos:
+        Example:
         ===META===
         USED|0,2,5,7
         DROP|1,3,4,6
@@ -50,14 +50,14 @@ public class AnswerStage(OpenAiService openAi)
     public static string BuildContext(IList<ChunkResult> results)
     {
         if (results.Count == 0)
-            return "No se encontraron resultados relevantes en la normativa.";
+            return "No relevant results found in the regulations.";
 
         return string.Join("\n\n---\n\n", results.Select((doc, i) =>
         {
             var parts = new List<string> { $"[{i}] {doc.Law ?? "?"} > {doc.Section ?? "?"}" };
-            if (!string.IsNullOrEmpty(doc.Chapter)) parts.Add($"Capítulo: {doc.Chapter}");
-            if (!string.IsNullOrEmpty(doc.Resumen)) parts.Add($"Resumen: {doc.Resumen}");
-            if (!string.IsNullOrEmpty(doc.Text)) parts.Add($"Texto: {doc.Text}");
+            if (!string.IsNullOrEmpty(doc.Chapter)) parts.Add($"Chapter: {doc.Chapter}");
+            if (!string.IsNullOrEmpty(doc.Resumen)) parts.Add($"Summary: {doc.Resumen}");
+            if (!string.IsNullOrEmpty(doc.Text)) parts.Add($"Text: {doc.Text}");
             return string.Join('\n', parts);
         }));
     }
@@ -70,7 +70,7 @@ public class AnswerStage(OpenAiService openAi)
         var augmented = new List<OaiChatMessage>
         {
             new SystemChatMessage(AppConfig.SystemPrompt),
-            new SystemChatMessage($"CONTEXTO DE NORMATIVA:\n\n{context}"),
+            new SystemChatMessage($"REGULATION CONTEXT:\n\n{context}"),
             new SystemChatMessage(AnswerWrapper),
         };
 
@@ -109,7 +109,7 @@ public class AnswerStage(OpenAiService openAi)
         var raw = await openAi.CallGpt52Async(chatMessages);
         var meta = ParseMeta(raw);
 
-        const string delimiter = "===META===";
+        const string delimiter = "===META";
         var idx = raw.IndexOf(delimiter, StringComparison.Ordinal);
         var answer = idx >= 0 ? raw[..idx].Trim() : raw.Trim();
         return (answer, meta);
@@ -117,26 +117,28 @@ public class AnswerStage(OpenAiService openAi)
 
     private static AnswerMeta ParseMeta(string raw)
     {
-        const string delimiter = "===META===";
+        const string delimiter = "===META";
         var meta = new AnswerMeta();
         var idx = raw.IndexOf(delimiter, StringComparison.Ordinal);
         if (idx < 0) return meta;
 
-        var metaSection = raw[(idx + delimiter.Length)..].Trim();
+        // Skip delimiter and any trailing '=' or whitespace
+        var afterDelim = raw[(idx + delimiter.Length)..];
+        var metaSection = afterDelim.TrimStart('=').Trim();
         foreach (var line in metaSection.Split('\n'))
         {
             var trimmed = line.Trim();
             if (trimmed.StartsWith("USED|"))
             {
                 var val = trimmed[5..].Trim();
-                if (!string.IsNullOrEmpty(val) && val != "ninguno")
+                if (!string.IsNullOrEmpty(val) && val != "none")
                     meta.Used = val.Split(',').Select(s => int.TryParse(s.Trim(), out var n) ? n : -1)
                                    .Where(n => n >= 0).ToList();
             }
             else if (trimmed.StartsWith("DROP|"))
             {
                 var val = trimmed[5..].Trim();
-                if (!string.IsNullOrEmpty(val) && val != "ninguno")
+                if (!string.IsNullOrEmpty(val) && val != "none")
                     meta.Drop = val.Split(',').Select(s => int.TryParse(s.Trim(), out var n) ? n : -1)
                                    .Where(n => n >= 0).ToList();
             }

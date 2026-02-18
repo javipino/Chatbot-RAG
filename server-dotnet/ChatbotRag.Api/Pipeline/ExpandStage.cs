@@ -12,46 +12,46 @@ public class ExpandStage(OpenAiService openAi, ILogger<ExpandStage> logger)
 {
     private const string ExpandSystemPrompt =
         """
-        Eres un asistente legal. Tu tarea es generar las PALABRAS CLAVE de búsqueda necesarias para encontrar normativa relevante en una base de datos de legislación laboral y de Seguridad Social española.
+        You are a legal assistant. Your task is to generate the SEARCH KEYWORDS needed to find relevant regulations in a database of Spanish labor and Social Security legislation.
 
-        RESPONDE SOLO con un JSON array de strings. Cada string es una búsqueda de 3-6 palabras clave.
+        RESPOND ONLY with a JSON array of strings. Each string is a search query of 3-6 keywords.
 
-        Reglas:
-        - Cada query debe ser CORTA: solo 3-6 palabras clave relevantes. NO escribas frases completas.
-        - NO incluyas números de artículo (ej: "artículo 48", "art. 250"). La búsqueda semántica no los necesita.
-        - Incluye el término técnico-legal Y el coloquial si son distintos.
-        - Si la pregunta es SIMPLE (un solo concepto), devuelve UN array con una sola query.
-          Ejemplo: "¿cuántos días de vacaciones tengo?" → ["vacaciones anuales retribuidas días disfrute"]
-        - Si la pregunta es COMPLEJA (compara o involucra varios conceptos), devuelve VARIAS queries (una por concepto).
-          Ejemplo: "¿qué diferencia hay entre despido objetivo y disciplinario?" →
+        Rules:
+        - Each query must be SHORT: only 3-6 relevant keywords. Do NOT write full sentences.
+        - Do NOT include article numbers (e.g., "artículo 48", "art. 250"). Semantic search does not need them.
+        - Include both the technical legal term AND the colloquial one if they differ.
+        - If the question is SIMPLE (one concept), return an array with a single query.
+          Example: "¿cuántos días de vacaciones tengo?" → ["vacaciones anuales retribuidas días disfrute"]
+        - If the question is COMPLEX (compares or involves several concepts), return MULTIPLE queries (one per concept).
+          Example: "¿qué diferencia hay entre despido objetivo y disciplinario?" →
           ["despido objetivo causas indemnización",
            "despido disciplinario causas procedimiento"]
-        - Equivalencias coloquiales a términos legales:
+        - Colloquial-to-legal equivalences:
           * "baja de maternidad" → "suspensión contrato nacimiento cuidado menor"
           * "despido" → "extinción contrato despido"
           * "paro" → "prestación desempleo"
           * "baja médica" → "incapacidad temporal prestación"
           * "pensión" → "jubilación prestación contributiva"
           * "finiquito" → "liquidación haberes extinción contrato"
-        - Máximo 4 queries. Agrupa conceptos cercanos si son más.
+        - Maximum 4 queries. Group closely related concepts if there are more.
 
-        RESPONDE SOLO con el JSON array. Sin explicaciones, sin markdown, sin backticks.
+        RESPOND ONLY with the JSON array. No explanations, no markdown, no backticks.
         """;
 
     private const string ExpandFollowupPrompt =
         """
-        Eres un asistente legal. El usuario hace una pregunta de CONTINUACIÓN sobre la conversación previa.
-        Ya tenemos el contexto normativo de la pregunta anterior (se inyectará automáticamente).
-        Tu tarea es generar SOLO las búsquedas ADICIONALES necesarias para los conceptos NUEVOS que aparecen en esta pregunta de continuación.
+        You are a legal assistant. The user is asking a FOLLOW-UP question about the previous conversation.
+        We already have the regulatory context from the previous question (it will be injected automatically).
+        Your task is to generate ONLY the ADDITIONAL searches needed for NEW concepts appearing in this follow-up question.
 
-        RESPONDE SOLO con un JSON array de strings (3-6 palabras clave cada una).
-        - Si la pregunta no introduce conceptos nuevos (ej: "¿puedes explicarlo mejor?"), devuelve un array vacío: []
-        - Si introduce conceptos nuevos, genera queries SOLO para esos conceptos nuevos.
-          Ejemplo (si la conversación era sobre vacaciones): "¿y si no me las dan?" → ["sanción incumplimiento empresario vacaciones reclamación"]
-        - NO repitas búsquedas de conceptos que ya se trataron en la conversación anterior.
-        - Máximo 3 queries nuevas.
+        RESPOND ONLY with a JSON array of strings (3-6 keywords each).
+        - If the question introduces no new concepts (e.g., "can you explain that better?"), return an empty array: []
+        - If it introduces new concepts, generate queries ONLY for those new concepts.
+          Example (if the conversation was about vacations): "¿y si no me las dan?" → ["sanción incumplimiento empresario vacaciones reclamación"]
+        - Do NOT repeat searches for concepts already covered in the previous conversation.
+        - Maximum 3 new queries.
 
-        RESPONDE SOLO con el JSON array. Sin explicaciones, sin markdown, sin backticks.
+        RESPOND ONLY with the JSON array. No explanations, no markdown, no backticks.
         """;
 
     /// <summary>

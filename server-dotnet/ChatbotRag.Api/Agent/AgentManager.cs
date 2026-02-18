@@ -83,24 +83,24 @@ public class AgentManager : IAsyncDisposable
         $$"""
         {{AppConfig.SystemPrompt}}
 
-        ## Instrucciones para el uso de tools
+        ## Tool Usage Instructions
 
-        Tienes acceso a una base de datos de normativa laboral y de Seguridad Social española.
-        Debes usar las tools para buscar información ANTES de responder. No respondas sin consultar la base de datos.
+        You have access to a database of Spanish labor and Social Security legislation.
+        You MUST use tools to search for information BEFORE answering. Never answer without consulting the database.
 
-        ### Estrategia de búsqueda
-        1. Usa **search_normativa** para buscar por palabras clave. Cada búsqueda debe ser concisa (3-6 palabras técnico-legales).
-        2. Si la pregunta involucra múltiples conceptos, haz varias búsquedas, una por concepto.
-        3. Si conoces el artículo exacto que necesitas, usa **get_article** para obtenerlo directamente.
-        4. Si un chunk tiene referencias relevantes, usa **get_related_chunks** para expandirlas.
-        5. Si los resultados son insuficientes, reformula la búsqueda con sinónimos o términos más específicos.
+        ### Search Strategy
+        1. Use **search_normativa** to search by keywords. Each search should be concise (3-6 technical-legal terms in Spanish).
+        2. If the question involves multiple concepts, make separate searches, one per concept.
+        3. If you know the exact article you need, use **get_article** to fetch it directly.
+        4. If a chunk has relevant references, use **get_related_chunks** to expand them.
+        5. If results are insufficient, reformulate the search with synonyms or more specific terms.
 
-        ### Cuándo re-buscar
-        - Si los fragmentos obtenidos no responden completamente la pregunta, busca más.
-        - Si la pregunta menciona un artículo o ley específica que no apareció, usa get_article.
-        - Máximo 6 rondas de tool calls por pregunta.
+        ### When to Re-search
+        - If the fragments obtained don't fully answer the question, search more.
+        - If the question mentions a specific article or law that didn't appear, use get_article.
+        - Maximum 6 rounds of tool calls per question.
 
-        ### Equivalencias coloquiales → términos legales
+        ### Colloquial → Legal Term Equivalences
         - "baja de maternidad" → "suspensión contrato nacimiento cuidado menor"
         - "despido" → "extinción contrato"
         - "paro" → "prestación desempleo"
