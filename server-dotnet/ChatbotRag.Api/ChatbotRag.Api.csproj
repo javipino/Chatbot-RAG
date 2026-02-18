@@ -9,7 +9,6 @@
   <ItemGroup>
     <PackageReference Include="Azure.AI.Agents.Persistent" Version="1.1.0" />
     <PackageReference Include="Azure.AI.OpenAI" Version="2.1.0" />
-    <PackageReference Include="Azure.AI.Projects" Version="1.1.0" />
     <PackageReference Include="Azure.Identity" Version="1.16.0" />
   </ItemGroup>
 

@@ -1,5 +1,4 @@
 using Azure;
-using Azure.AI.Projects;
 using Azure.AI.Agents.Persistent;
 using Azure.Identity;
 using BinaryData = System.BinaryData;
@@ -8,7 +7,7 @@ namespace ChatbotRag.Api.Agent;
 
 /// <summary>
 /// Manages the persistent agent lifecycle: create once at startup, reuse across requests.
-/// Uses Azure AI Foundry project connection.
+/// Uses PersistentAgentsClient directly with Azure AI Foundry project endpoint.
 /// </summary>
 public class AgentManager : IAsyncDisposable
 {
@@ -23,11 +22,16 @@ public class AgentManager : IAsyncDisposable
     {
         _logger = logger;
 
-        var projectClient = new AIProjectClient(
-            new Uri(AppConfig.AiProjectEndpoint),
-            new Azure.Identity.DefaultAzureCredential());
+        // Use PersistentAgentsClient directly (not via AIProjectClient) to avoid
+        // endpoint transformation issues. Force V2025_05_01 API version since
+        // the default "v1" may not be supported by all AI Foundry endpoints.
+        var options = new PersistentAgentsAdministrationClientOptions(
+            PersistentAgentsAdministrationClientOptions.ServiceVersion.V2025_05_01);
 
-        _agentsClient = projectClient.GetPersistentAgentsClient();
+        _agentsClient = new PersistentAgentsClient(
+            AppConfig.AiProjectEndpoint,
+            new DefaultAzureCredential(),
+            options);
     }
 
     public async Task<string> GetAgentIdAsync()
