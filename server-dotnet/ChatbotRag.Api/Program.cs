@@ -4,7 +4,10 @@ using ChatbotRag.Api.Endpoints;
 using ChatbotRag.Api.Pipeline;
 using ChatbotRag.Api.Services;
 
+// App Service Linux sets PORT env var; default to 8080 for container compatibility
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 // ── Logging ──
 builder.Logging.AddConsole();
