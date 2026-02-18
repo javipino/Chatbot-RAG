@@ -275,7 +275,6 @@ public static class RagPipelineEndpoints
                 await SseHelper.WriteErrorAsync(ctx.Response, ex.Message);
             }
         })
-        .RequireAuthorization("RagApiKey")
         .WithName("RagPipeline");
     }
 }
