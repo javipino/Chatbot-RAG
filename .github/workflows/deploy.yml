@@ -1,9 +1,15 @@
 name: Deploy to Azure App Service
 
 on:
-  push:
-    branches: [master]
   workflow_dispatch:
+  # Node.js deploy is disabled — .NET backend now serves both API and static frontend
+  # Re-enable push trigger only if reverting to Node.js backend
+  # push:
+  #   branches: [master]
+  #   paths:
+  #     - 'server/**'
+  #     - 'public/**'
+  #     - '.github/workflows/deploy.yml'
 
 jobs:
   deploy:
