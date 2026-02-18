@@ -120,7 +120,13 @@ export const API = {
 
                 try {
                     const parsed = JSON.parse(dataStr);
-                    if (eventType === 'token' && onToken) onToken(parsed.text ?? parsed);
+                    if (eventType === 'token' && onToken) {
+                        // Strip any leaked META section (safety net for partial delimiters)
+                        let text = parsed.text ?? parsed;
+                        const metaIdx = typeof text === 'string' ? text.indexOf('===META') : -1;
+                        if (metaIdx >= 0) text = text.slice(0, metaIdx).trimEnd();
+                        if (text) onToken(text);
+                    }
                     else if (eventType === 'tool_status' && onToolStatus) onToolStatus(parsed.tool, parsed.args);
                     else if (eventType === 'done' && onDone) onDone(parsed);
                     else if (eventType === 'error' && onError) onError(parsed.error ?? parsed);

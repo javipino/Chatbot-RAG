@@ -122,12 +122,14 @@ public static class RagPipelineEndpoints
                 var answerText = new System.Text.StringBuilder();
                 AnswerMeta? meta = null;
 
+                // Use '===META' prefix as delimiter — model sometimes omits the trailing '==='
+                const string metaDelimiter = "===META";
+                bool metaSeen = false;
+
                 await foreach (var (token, parsedMeta) in answer.GenerateStreamingAsync(context, messages))
                 {
-                    if (token != null)
+                    if (token != null && !metaSeen)
                     {
-                        // Strip META section from streamed tokens
-                        const string metaDelimiter = "===META===";
                         var full = answerText.ToString() + token;
                         var delimIdx = full.IndexOf(metaDelimiter, StringComparison.Ordinal);
                         if (delimIdx < 0)
@@ -135,17 +137,19 @@ public static class RagPipelineEndpoints
                             answerText.Append(token);
                             await SseHelper.WriteTokenAsync(ctx.Response, token);
                         }
-                        else if (answerText.Length < delimIdx)
+                        else
                         {
-                            // Final token before delimiter — emit only the clean part
-                            var clean = full[..(delimIdx - answerText.Length)];
-                            if (!string.IsNullOrEmpty(clean))
+                            metaSeen = true;
+                            // Emit only the text before the delimiter
+                            var clean = full[..delimIdx].TrimEnd();
+                            if (clean.Length > answerText.Length)
                             {
-                                answerText.Append(clean);
-                                await SseHelper.WriteTokenAsync(ctx.Response, clean);
+                                var newPart = clean[answerText.Length..];
+                                if (!string.IsNullOrEmpty(newPart))
+                                    await SseHelper.WriteTokenAsync(ctx.Response, newPart);
                             }
+                            answerText.Append(clean[answerText.Length..]);
                         }
-                        // After delimiter → buffer silently
                     }
                     else if (parsedMeta != null)
                     {

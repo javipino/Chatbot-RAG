@@ -4,7 +4,6 @@
 export const Config = {
     // API endpoints (relative to current domain)
     CHAT_ENDPOINT: '/api/chat',
-    RAG_ENDPOINT: '/api/rag',
 
     // Model presets
     MODEL_PRESETS: [
@@ -34,14 +33,14 @@ export const Config = {
         },
         {
             id: 'ss-expert-pipeline',
-            name: 'SS Expert .NET Pipeline',
+            name: 'SS Expert (RAG)',
             provider: 'rag',
             format: 'rag-pipeline',
             endpoint: '/api/rag-pipeline',
         },
         {
             id: 'ss-expert-agent',
-            name: 'SS Expert .NET Agent',
+            name: 'SS Expert (Agente)',
             provider: 'rag',
             format: 'rag-agent',
             endpoint: '/api/rag-agent',

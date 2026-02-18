@@ -52,11 +52,15 @@ public class AgentManager : IAsyncDisposable
     {
         var tools = ToolDefinitions.All;
 
+        // Azure AI Foundry API requires tool_resources field even if empty
+        var toolResources = new ToolResources();
+
         return await _agentsClient.Administration.CreateAgentAsync(
             model: AppConfig.Gpt52Deployment,
             name: "ss-expert",
             instructions: BuildAgentInstructions(),
-            tools: tools);
+            tools: tools,
+            toolResources: toolResources);
     }
 
     private static string BuildAgentInstructions() =>
