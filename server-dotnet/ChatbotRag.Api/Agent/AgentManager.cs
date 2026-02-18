@@ -1,6 +1,7 @@
 using Azure;
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
+using Azure.Core.Pipeline;
 using Azure.Identity;
 using BinaryData = System.BinaryData;
 
@@ -23,6 +24,55 @@ internal sealed class AiFoundryCredential : TokenCredential
 }
 
 /// <summary>
+/// Pipeline policy that logs outgoing HTTP requests for debugging SDK calls.
+/// </summary>
+internal sealed class LoggingPolicy(ILogger logger) : HttpPipelinePolicy
+{
+    public override void Process(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline)
+    {
+        LogRequest(message);
+        ProcessNext(message, pipeline);
+        LogResponse(message);
+    }
+
+    public override async ValueTask ProcessAsync(HttpMessage message, ReadOnlyMemory<HttpPipelinePolicy> pipeline)
+    {
+        LogRequest(message);
+        await ProcessNextAsync(message, pipeline);
+        LogResponse(message);
+    }
+
+    private void LogRequest(HttpMessage message)
+    {
+        var req = message.Request;
+        logger.LogWarning("[SDK-HTTP] {Method} {Uri}", req.Method, req.Uri);
+        if (req.Content != null)
+        {
+            using var ms = new System.IO.MemoryStream();
+            req.Content.WriteTo(ms, default);
+            var body = System.Text.Encoding.UTF8.GetString(ms.ToArray());
+            // Truncate to 500 chars for logging
+            logger.LogWarning("[SDK-HTTP] Body: {Body}", body.Length > 500 ? body[..500] + "..." : body);
+        }
+    }
+
+    private void LogResponse(HttpMessage message)
+    {
+        var resp = message.Response;
+        logger.LogWarning("[SDK-HTTP] Response: {Status} {Reason}", resp.Status, resp.ReasonPhrase);
+        if (resp.Status >= 400)
+        {
+            using var reader = new System.IO.StreamReader(resp.ContentStream ?? System.IO.Stream.Null, leaveOpen: true);
+            var body = reader.ReadToEnd();
+            logger.LogWarning("[SDK-HTTP] Error body: {Body}", body.Length > 1000 ? body[..1000] : body);
+            // Reset stream position for SDK to read
+            if (resp.ContentStream?.CanSeek == true)
+                resp.ContentStream.Position = 0;
+        }
+    }
+}
+
+/// <summary>
 /// Manages the persistent agent lifecycle: create once at startup, reuse across requests.
 /// Uses PersistentAgentsClient directly with Azure AI Foundry project endpoint.
 /// </summary>
@@ -41,9 +91,13 @@ public class AgentManager : IAsyncDisposable
 
         // Use PersistentAgentsClient directly with AiFoundryCredential that
         // forces the correct token audience (ai.azure.com instead of cognitiveservices.azure.com).
+        var options = new PersistentAgentsAdministrationClientOptions();
+        options.AddPolicy(new LoggingPolicy(logger), HttpPipelinePosition.BeforeTransport);
+
         _agentsClient = new PersistentAgentsClient(
             AppConfig.AiProjectEndpoint,
-            new AiFoundryCredential());
+            new AiFoundryCredential(),
+            options);
     }
 
     public async Task<string> GetAgentIdAsync()
