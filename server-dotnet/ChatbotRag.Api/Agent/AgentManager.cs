@@ -2,6 +2,8 @@ using Azure;
 using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Azure.Identity;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using BinaryData = System.BinaryData;
 
 namespace ChatbotRag.Api.Agent;
@@ -29,34 +31,36 @@ internal sealed class AiFoundryCredential : TokenCredential
 public class AgentManager : IAsyncDisposable
 {
     private readonly PersistentAgentsClient _agentsClient;
-    private PersistentAgent? _agent;
+    private string? _agentId;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private readonly ILogger<AgentManager> _logger;
+    private readonly AiFoundryCredential _credential;
 
     public PersistentAgentsClient AgentsClient => _agentsClient;
 
     public AgentManager(ILogger<AgentManager> logger)
     {
         _logger = logger;
+        _credential = new AiFoundryCredential();
 
         // Use PersistentAgentsClient directly with AiFoundryCredential that
         // forces the correct token audience (ai.azure.com instead of cognitiveservices.azure.com).
         _agentsClient = new PersistentAgentsClient(
             AppConfig.AiProjectEndpoint,
-            new AiFoundryCredential());
+            _credential);
     }
 
     public async Task<string> GetAgentIdAsync()
     {
-        if (_agent != null) return _agent.Id;
+        if (!string.IsNullOrEmpty(_agentId)) return _agentId;
 
         await _initLock.WaitAsync();
         try
         {
-            if (_agent != null) return _agent.Id;
-            _agent = await CreateAgentAsync();
-            _logger.LogInformation("Persistent agent created: {Id}", _agent.Id);
-            return _agent.Id;
+            if (!string.IsNullOrEmpty(_agentId)) return _agentId;
+            _agentId = await CreateAgentIdAsync();
+            _logger.LogInformation("Persistent agent created: {Id}", _agentId);
+            return _agentId;
         }
         finally
         {
@@ -64,20 +68,117 @@ public class AgentManager : IAsyncDisposable
         }
     }
 
-    private async Task<PersistentAgent> CreateAgentAsync()
+    private async Task<string> CreateAgentIdAsync()
     {
-        var tools = ToolDefinitions.All;
+        var token = await _credential.GetTokenAsync(new TokenRequestContext(["https://ai.azure.com/.default"]), CancellationToken.None);
+        var endpoint = AppConfig.AiProjectEndpoint.TrimEnd('/');
+        var url = $"{endpoint}/assistants?api-version=v1";
 
-        // Azure AI Foundry API requires tool_resources field even if empty
-        var toolResources = new ToolResources();
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = JsonContent.Create(new
+            {
+                model = AppConfig.Gpt52Deployment,
+                name = "ss-expert",
+                instructions = BuildAgentInstructions(),
+                tools = BuildRawTools(),
+                tool_resources = new { }
+            })
+        };
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
 
-        return await _agentsClient.Administration.CreateAgentAsync(
-            model: AppConfig.Gpt52Deployment,
-            name: "ss-expert",
-            instructions: BuildAgentInstructions(),
-            tools: tools,
-            toolResources: toolResources);
+        var response = await http.SendAsync(request);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+            throw new InvalidOperationException($"Agent creation failed: {(int)response.StatusCode} {response.ReasonPhrase}. Body: {responseBody}");
+
+        using var doc = System.Text.Json.JsonDocument.Parse(responseBody);
+        if (!doc.RootElement.TryGetProperty("id", out var idElement) || string.IsNullOrWhiteSpace(idElement.GetString()))
+            throw new InvalidOperationException($"Agent creation succeeded but no id was returned. Body: {responseBody}");
+
+        return idElement.GetString()!;
     }
+
+    private static object[] BuildRawTools() =>
+    [
+        new
+        {
+            type = "function",
+            function = new
+            {
+                name = "search_normativa",
+                description = "Search the Spanish labor and Social Security legislation database (BOE, ET, LGSS, LPRL, etc.) using hybrid semantic + keyword search.",
+                parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        query = new { type = "string", description = "Search keywords (3-6 technical-legal terms in Spanish)" },
+                        top_k = new { type = "integer", description = "Number of results to return (default 8, max 15)", @default = 8 }
+                    },
+                    required = new[] { "query" }
+                }
+            }
+        },
+        new
+        {
+            type = "function",
+            function = new
+            {
+                name = "search_sentencias",
+                description = "Search the Supreme Court case law collection on Social Security and labor law.",
+                parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        query = new { type = "string", description = "Case law search keywords (in Spanish)" },
+                        top_k = new { type = "integer", description = "Number of results (default 5, max 10)", @default = 5 }
+                    },
+                    required = new[] { "query" }
+                }
+            }
+        },
+        new
+        {
+            type = "function",
+            function = new
+            {
+                name = "get_article",
+                description = "Fetch a specific article from the regulations by its number and law name.",
+                parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        article_number = new { type = "string", description = "Article number. E.g.: '48', '205.1'" },
+                        law_name = new { type = "string", description = "Law name. E.g.: 'Estatuto de los Trabajadores', 'LGSS'" }
+                    },
+                    required = new[] { "article_number", "law_name" }
+                }
+            }
+        },
+        new
+        {
+            type = "function",
+            function = new
+            {
+                name = "get_related_chunks",
+                description = "Fetch the chunks referenced by a given chunk.",
+                parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        chunk_id = new { type = "string", description = "Chunk ID (UUID or integer) to get references from" }
+                    },
+                    required = new[] { "chunk_id" }
+                }
+            }
+        }
+    ];
 
     private static string BuildAgentInstructions() =>
         $$"""
@@ -115,12 +216,12 @@ public class AgentManager : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_agent != null)
+        if (!string.IsNullOrEmpty(_agentId))
         {
             try
             {
-                await _agentsClient.Administration.DeleteAgentAsync(_agent.Id);
-                _logger.LogInformation("Persistent agent deleted: {Id}", _agent.Id);
+                await _agentsClient.Administration.DeleteAgentAsync(_agentId);
+                _logger.LogInformation("Persistent agent deleted: {Id}", _agentId);
             }
             catch (Exception ex)
             {
