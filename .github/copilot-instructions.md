@@ -86,11 +86,6 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 - **LLMs:** Azure OpenAI (GPT-5.2 + GPT-5 Nano + text-embedding-3-small)
 - **CI/CD:** `.github/workflows/deploy-dotnet.yml` — `dotnet publish` + zip deploy vía Kudu
 
-### Stack legacy (desactivado en CI, disponible para rollback)
-- **Backend Node.js:** Express.js — `server/`
-- **CI/CD:** `.github/workflows/deploy.yml` — desactivado (solo `workflow_dispatch`)
-- Para reactivar: descomentar el `push` trigger en `deploy.yml`
-
 ### RAG Pipeline
 
 ```
@@ -107,15 +102,21 @@ Query → 1.Expand(Nano) → 2.Embed(e3s) → 3.Sparse(TF-IDF)
 - **Scoring & Cap:** Todos los chunks se puntúan con `_score`, se ordenan por score desc y se toman top 25 (`MAX_CHUNKS_TO_MODEL`)
 - **Unified answer:** GPT-5.2 responde + reporta USED/DROP/NEED en una sola llamada
 - **DROP → carryover:** Chunks marcados como DROP no se arrastran a turnos siguientes
-- **Vocabulario TF-IDF:** JSON estático desplegado con el servidor (`server/data/tfidf_vocabulary.json` y `server-dotnet/ChatbotRag.Api/Data/`)
+- **Vocabulario TF-IDF:** JSON estático desplegado con el servidor (`server-dotnet/ChatbotRag.Api/Data/tfidf_vocabulary.json`)
 
 ### Agent Mode (Azure AI Foundry)
 
+⚠️ **Estado: inestable** — `CreateAgentAsync` falla con `Unknown fields: model, name, instructions` (incompatibilidad SDK ↔ API endpoint de AI Foundry).
+
 Modo alternativo al pipeline. Usa `AgentManager` + `ToolExecutor` para crear un agente con herramientas:
 - `search_normativa` — busca en Qdrant
-- `get_article` — fetch de artículo concreto por ID
+- `search_sentencias` — busca en jurisprudencia
+- `get_article` — fetch de artículo concreto
+- `get_related_chunks` — expande referencias de un chunk
 
 El agente llama a las herramientas iterativamente. Endpoint: `POST /api/rag-agent` (SSE streaming).
+
+**MSI configurada:** App Service tiene System-Assigned Identity (`5d5eeccf-ed1d-4098-b72a-e7cb458f94b8`) con roles `Azure AI Developer` + `Azure AI User` en `javie-mku5l3k8-swedencentral` hub.
 
 ### Endpoints API (.NET)
 
@@ -129,9 +130,8 @@ El agente llama a las herramientas iterativamente. Endpoint: `POST /api/rag-agen
 
 | Preset ID | Nombre | Backend |
 |-----------|--------|---------|
-| `ss-expert-pipeline` | SS Expert .NET Pipeline | `/api/rag-pipeline` (SSE) |
-| `ss-expert-agent` | SS Expert .NET Agent | `/api/rag-agent` (SSE) |
-| `ss-expert` | SS Expert (Node.js) | `/api/rag` (JSON, legacy) |
+| `ss-expert-pipeline` | SS Expert (RAG) | `/api/rag-pipeline` (SSE) — **activo y funcional** |
+| `ss-expert-agent` | SS Expert (Agente) | `/api/rag-agent` (SSE) — ⚠️ inestable |
 
 ### SSE Streaming Protocol
 
@@ -160,15 +160,6 @@ El frontend (`api.js` → `callStreaming()`) maneja estos eventos mostrando toke
 │       ├── ui.js                # DOM, markdown, sidebar, streaming helpers
 │       ├── chat.js              # Estado y lógica del chat
 │       └── app.js               # Inicialización, eventos, imports
-├── server/                      # Backend Express (legacy, desactivado en CI)
-│   ├── index.js
-│   ├── config.js
-│   ├── middleware/auth.js
-│   ├── routes/chat.js           # POST /api/chat
-│   ├── routes/rag.js            # POST /api/rag (pipeline JSON)
-│   ├── services/{http,tfidf,openai,qdrant}.js
-│   ├── pipeline/{expand,search,enrich,answer,rerank}.js
-│   └── data/tfidf_vocabulary.json
 ├── server-dotnet/               # Backend .NET 10 (ACTIVO en producción)
 │   └── ChatbotRag.Api/
 │       ├── Program.cs           # Entry point, DI, static files, PORT env var
