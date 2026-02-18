@@ -44,6 +44,10 @@ if (hasFoundry)
     builder.Services.AddScoped<ToolExecutor>();
 }
 
+// ── Authorization: no-op policies (manual key checks inside endpoints) ──
+builder.Services.AddAuthorization(opts =>
+    opts.AddPolicy("RagApiKey", policy => policy.RequireAssertion(_ => true)));
+
 var app = builder.Build();
 
 // ── Static files + SPA fallback ──

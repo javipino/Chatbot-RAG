@@ -142,6 +142,7 @@ public static class RagAgentEndpoints
                 await SseHelper.WriteErrorAsync(ctx.Response, ex.Message);
             }
         })
+        .RequireAuthorization("RagApiKey")
         .WithName("RagAgent");
     }
 }
