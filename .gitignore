@@ -21,6 +21,7 @@ npm-debug.log*
 
 # Logs & archives
 logs/
+app-logs*/
 *.log
 *.zip
 
