@@ -1,9 +1,26 @@
 using Azure;
 using Azure.AI.Agents.Persistent;
+using Azure.Core;
 using Azure.Identity;
 using BinaryData = System.BinaryData;
 
 namespace ChatbotRag.Api.Agent;
+
+/// <summary>
+/// Wraps DefaultAzureCredential to force the correct audience for Azure AI Foundry Agents API.
+/// The SDK defaults to cognitiveservices.azure.com, but agents require ai.azure.com.
+/// </summary>
+internal sealed class AiFoundryCredential : TokenCredential
+{
+    private static readonly string[] Scopes = ["https://ai.azure.com/.default"];
+    private readonly DefaultAzureCredential _inner = new();
+
+    public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
+        => _inner.GetToken(new TokenRequestContext(Scopes), cancellationToken);
+
+    public override ValueTask<AccessToken> GetTokenAsync(TokenRequestContext requestContext, CancellationToken cancellationToken)
+        => _inner.GetTokenAsync(new TokenRequestContext(Scopes), cancellationToken);
+}
 
 /// <summary>
 /// Manages the persistent agent lifecycle: create once at startup, reuse across requests.
@@ -22,16 +39,11 @@ public class AgentManager : IAsyncDisposable
     {
         _logger = logger;
 
-        // Use PersistentAgentsClient directly (not via AIProjectClient) to avoid
-        // endpoint transformation issues. Force V2025_05_01 API version since
-        // the default "v1" may not be supported by all AI Foundry endpoints.
-        var options = new PersistentAgentsAdministrationClientOptions(
-            PersistentAgentsAdministrationClientOptions.ServiceVersion.V2025_05_01);
-
+        // Use PersistentAgentsClient directly with AiFoundryCredential that
+        // forces the correct token audience (ai.azure.com instead of cognitiveservices.azure.com).
         _agentsClient = new PersistentAgentsClient(
             AppConfig.AiProjectEndpoint,
-            new DefaultAzureCredential(),
-            options);
+            new AiFoundryCredential());
     }
 
     public async Task<string> GetAgentIdAsync()
