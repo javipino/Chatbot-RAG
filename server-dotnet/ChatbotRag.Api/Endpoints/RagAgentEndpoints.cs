@@ -59,53 +59,66 @@ public static class RagAgentEndpoints
                 var collectedSources = new List<object>();
                 ThreadRun? currentRun = null;
 
-                await foreach (var update in stream)
+                while (true)
                 {
-                    switch (update)
+                    var toolOutputs = new List<ToolOutput>();
+
+                    await foreach (var update in stream)
                     {
-                        case RunUpdate runUpdate when update.UpdateKind == StreamingUpdateReason.RunCreated:
-                            currentRun = runUpdate.Value;
-                            logger.LogInformation("[AGENT] Run created: {Id}", currentRun.Id);
-                            break;
-
-                        case RequiredActionUpdate actionUpdate:
+                        switch (update)
                         {
-                            var toolName = actionUpdate.FunctionName;
-                            object? toolArgs = null;
-                            try
+                            case RunUpdate runUpdate when update.UpdateKind == StreamingUpdateReason.RunCreated:
+                                currentRun = runUpdate.Value;
+                                logger.LogInformation("[AGENT] Run created: {Id}", currentRun.Id);
+                                break;
+
+                            case RequiredActionUpdate actionUpdate:
                             {
-                                toolArgs = System.Text.Json.JsonSerializer.Deserialize<object>(actionUpdate.FunctionArguments);
+                                var toolName = actionUpdate.FunctionName;
+                                object? toolArgs = null;
+                                try
+                                {
+                                    toolArgs = System.Text.Json.JsonSerializer.Deserialize<object>(actionUpdate.FunctionArguments);
+                                }
+                                catch { }
+
+                                logger.LogInformation("[AGENT] Tool call: {Tool}({Args})", toolName, actionUpdate.FunctionArguments);
+                                await SseHelper.WriteToolStatusAsync(ctx.Response, toolName, toolArgs);
+
+                                var result = await toolExecutor.ExecuteAsync(actionUpdate);
+
+                                try
+                                {
+                                    var parsed = System.Text.Json.JsonSerializer.Deserialize<List<System.Text.Json.JsonElement>>(result);
+                                    if (parsed != null) collectedSources.AddRange(parsed);
+                                }
+                                catch { }
+
+                                toolOutputs.Add(new ToolOutput(actionUpdate.ToolCallId, result));
+                                break;
                             }
-                            catch { }
 
-                            logger.LogInformation("[AGENT] Tool call: {Tool}({Args})", toolName, actionUpdate.FunctionArguments);
-                            await SseHelper.WriteToolStatusAsync(ctx.Response, toolName, toolArgs);
+                            case MessageContentUpdate contentUpdate when !string.IsNullOrEmpty(contentUpdate.Text):
+                                await SseHelper.WriteTokenAsync(ctx.Response, contentUpdate.Text);
+                                break;
 
-                            // ToolExecutor needs name+args; use the existing actionUpdate directly
-                            var result = await toolExecutor.ExecuteAsync(actionUpdate);
-
-                            // Collect sources from search results
-                            try
-                            {
-                                var parsed = System.Text.Json.JsonSerializer.Deserialize<List<System.Text.Json.JsonElement>>(result);
-                                if (parsed != null) collectedSources.AddRange(parsed);
-                            }
-                            catch { }
-
-                            stream = agentsClient.Runs.SubmitToolOutputsToStreamAsync(
-                                currentRun!, new[] { new ToolOutput(actionUpdate.ToolCallId, result) });
-                            break;
+                            case RunUpdate runUpdate when update.UpdateKind == StreamingUpdateReason.RunFailed:
+                                logger.LogError("[AGENT] Run failed: {Error}", runUpdate.Value.LastError?.Message);
+                                await SseHelper.WriteErrorAsync(ctx.Response, runUpdate.Value.LastError?.Message ?? "Run failed");
+                                return;
                         }
-
-                        case MessageContentUpdate contentUpdate when !string.IsNullOrEmpty(contentUpdate.Text):
-                            await SseHelper.WriteTokenAsync(ctx.Response, contentUpdate.Text);
-                            break;
-
-                        case RunUpdate runUpdate when update.UpdateKind == StreamingUpdateReason.RunFailed:
-                            logger.LogError("[AGENT] Run failed: {Error}", runUpdate.Value.LastError?.Message);
-                            await SseHelper.WriteErrorAsync(ctx.Response, runUpdate.Value.LastError?.Message ?? "Run failed");
-                            return;
                     }
+
+                    if (toolOutputs.Count == 0)
+                        break;
+
+                    if (currentRun == null)
+                    {
+                        await SseHelper.WriteErrorAsync(ctx.Response, "Run state unavailable while submitting tool outputs.");
+                        return;
+                    }
+
+                    stream = agentsClient.Runs.SubmitToolOutputsToStreamAsync(currentRun, toolOutputs);
                 }
 
                 // ── Build deduplicated sources ──

@@ -32,6 +32,7 @@ public class AgentManager : IAsyncDisposable
 {
     private readonly PersistentAgentsClient _agentsClient;
     private string? _agentId;
+    private readonly string? _configuredAgentId;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private readonly ILogger<AgentManager> _logger;
     private readonly AiFoundryCredential _credential;
@@ -42,6 +43,10 @@ public class AgentManager : IAsyncDisposable
     {
         _logger = logger;
         _credential = new AiFoundryCredential();
+        _configuredAgentId = Environment.GetEnvironmentVariable("AZURE_AI_AGENT_ID");
+
+        if (!string.IsNullOrWhiteSpace(_configuredAgentId))
+            _logger.LogInformation("Using fixed Azure AI agent id from AZURE_AI_AGENT_ID: {Id}", _configuredAgentId);
 
         // Use PersistentAgentsClient directly with AiFoundryCredential that
         // forces the correct token audience (ai.azure.com instead of cognitiveservices.azure.com).
@@ -52,6 +57,9 @@ public class AgentManager : IAsyncDisposable
 
     public async Task<string> GetAgentIdAsync()
     {
+        if (!string.IsNullOrWhiteSpace(_configuredAgentId))
+            return _configuredAgentId;
+
         if (!string.IsNullOrEmpty(_agentId)) return _agentId;
 
         await _initLock.WaitAsync();
@@ -216,6 +224,9 @@ public class AgentManager : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        if (!string.IsNullOrWhiteSpace(_configuredAgentId))
+            return;
+
         if (!string.IsNullOrEmpty(_agentId))
         {
             try
