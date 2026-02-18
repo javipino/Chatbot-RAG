@@ -7,7 +7,10 @@
     "start": "node server/index.js"
   },
   "dependencies": {
-    "express": "^4.22.1"
+    "dotenv": "^17.3.1",
+    "express": "^4.22.1",
+    "ffmpeg-static": "^5.3.0",
+    "microsoft-cognitiveservices-speech-sdk": "^1.48.0"
   },
   "engines": {
     "node": ">=18.0.0"

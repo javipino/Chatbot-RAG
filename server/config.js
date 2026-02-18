@@ -34,10 +34,6 @@ const FOUNDRY_KEY = process.env.AZURE_FOUNDRY_KEY || READER_KEY;
 
 const RAG_API_KEY = process.env.RAG_API_KEY;
 
-// ── Azure AI Speech ──
-const SPEECH_KEY = process.env.AZURE_SPEECH_KEY;
-const SPEECH_REGION = process.env.AZURE_SPEECH_REGION || 'swedencentral';
-
 const MODEL_PROFILES = {
     'text-embedding-3-small': {
         type: 'azure-deployment-embeddings',
@@ -130,8 +126,6 @@ module.exports = {
     PRINCIPAL_ENDPOINT,
     PRINCIPAL_KEY,
     RAG_API_KEY,
-    SPEECH_KEY,
-    SPEECH_REGION,
     MODEL_PROFILES,
     STAGE_MODELS,
     getModelProfile,

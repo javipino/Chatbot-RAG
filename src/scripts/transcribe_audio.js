@@ -22,10 +22,21 @@ if (!SPEECH_KEY) {
     process.exit(1);
 }
 
+// Parse flags: --from=<seconds>  --append
+let fromSeconds = 0;
+let appendMode  = false;
+const positional = [];
+for (const arg of process.argv.slice(2)) {
+    const m = arg.match(/^--from[=\s]?(\d+)$/);
+    if (m) { fromSeconds = parseInt(m[1], 10); }
+    else if (arg === '--append') { appendMode = true; }
+    else { positional.push(arg); }
+}
+
 // Determine files to process
 let files;
-if (process.argv.length > 2) {
-    files = process.argv.slice(2).map(f => path.resolve(f));
+if (positional.length > 0) {
+    files = positional.map(f => path.resolve(f));
 } else {
     files = fs.readdirSync(AUDIO_DIR)
         .filter(f => /\.(ogg|wav|mp3|flac|m4a|webm)$/i.test(f))
@@ -39,22 +50,24 @@ if (files.length === 0) {
 
 /**
  * Convert any audio file to WAV PCM 16kHz mono using ffmpeg-static.
+ * fromSec: skip this many seconds from the start (0 = full file)
  * Returns a Buffer with the WAV bytes.
  */
-function toWavBuffer(filePath) {
+function toWavBuffer(filePath, fromSec = 0) {
+    const seekArgs = fromSec > 0 ? ['-ss', String(fromSec)] : [];
     // -f wav: output format WAV
     // -ar 16000: 16 kHz sample rate (Speech API preferred)
     // -ac 1: mono
     // -acodec pcm_s16le: 16-bit PCM
     // pipe:1: output to stdout
     return execFileSync(ffmpegPath, [
-        '-y', '-i', filePath,
+        '-y', ...seekArgs, '-i', filePath,
         '-f', 'wav',
         '-ar', '16000',
         '-ac', '1',
         '-acodec', 'pcm_s16le',
         'pipe:1',
-    ], { maxBuffer: 50 * 1024 * 1024 }); // up to 50 MB
+    ], { maxBuffer: 200 * 1024 * 1024 }); // up to 200 MB
 }
 
 /**
@@ -66,8 +79,9 @@ function transcribeFile(filePath) {
         // Convert to WAV PCM first (handles OGG, MP3, M4A, etc.)
         let wavBuffer;
         try {
-            process.stdout.write(`  Convirtiendo a WAV PCM 16kHz…\n`);
-            wavBuffer = toWavBuffer(filePath);
+            const fromLabel = fromSeconds > 0 ? ` desde ${fromSeconds}s` : '';
+            process.stdout.write(`  Convirtiendo a WAV PCM 16kHz${fromLabel}…\n`);
+            wavBuffer = toWavBuffer(filePath, fromSeconds);
             process.stdout.write(`  WAV: ${(wavBuffer.length / 1024).toFixed(0)} KB\n`);
         } catch (e) {
             return reject(new Error(`ffmpeg conversion failed: ${e.message}`));
@@ -107,7 +121,7 @@ function transcribeFile(filePath) {
 
         recognizer.sessionStopped = () => {
             recognizer.stopContinuousRecognitionAsync(() => {
-                resolve(segments.join(' '));
+                resolve(segments.join('\n'));
             });
         };
 
@@ -127,10 +141,16 @@ function transcribeFile(filePath) {
             const text = await transcribeFile(filePath);
             console.log(`\nTRANSCRIPCIÓN COMPLETA:\n${text}`);
 
-            // Save to .txt next to the audio file
+            // Save to .txt — one segment per line, append or overwrite
             const outPath = path.join(OUT_DIR, path.basename(filePath, path.extname(filePath)) + '.txt');
-            fs.writeFileSync(outPath, text, 'utf8');
-            console.log(`\nGuardado en: ${outPath}`);
+            const lines = text; // already newline-separated
+            if (appendMode) {
+                fs.appendFileSync(outPath, '\n' + lines, 'utf8');
+                console.log(`\nAñadido a: ${outPath}`);
+            } else {
+                fs.writeFileSync(outPath, lines, 'utf8');
+                console.log(`\nGuardado en: ${outPath}`);
+            }
         } catch (err) {
             console.error(`ERROR procesando ${name}: ${err.message}`);
         }
