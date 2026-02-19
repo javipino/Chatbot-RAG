@@ -73,14 +73,14 @@ jobs:
             exit 1
           fi
 
-          echo "Deploying $(du -h deploy-dotnet.zip | cut -f1) to chatbot-rag-javi..."
+          echo "Deploying $(du -h deploy-dotnet.zip | cut -f1) to func-consultas-internas..."
 
           HTTP_CODE=$(curl -s -o /tmp/deploy_response.txt -w "%{http_code}" \
             -X POST \
             -u "$USERNAME:$PASSWORD" \
             -H "Content-Type: application/zip" \
             --data-binary @deploy-dotnet.zip \
-            "https://chatbot-rag-javi.scm.azurewebsites.net/api/zipdeploy?isAsync=true")
+            "https://func-consultas-internas.scm.azurewebsites.net/api/zipdeploy?isAsync=true")
 
           echo "Kudu response: HTTP $HTTP_CODE"
           cat /tmp/deploy_response.txt || true
@@ -95,7 +95,7 @@ jobs:
           for i in $(seq 1 30); do
             sleep 10
             STATUS=$(curl -s -u "$USERNAME:$PASSWORD" \
-              "https://chatbot-rag-javi.scm.azurewebsites.net/api/deployments/latest" \
+              "https://func-consultas-internas.scm.azurewebsites.net/api/deployments/latest" \
               | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',0))" 2>/dev/null || echo "0")
             echo "  Status: $STATUS (attempt $i/30)"
             if [ "$STATUS" = "4" ]; then
