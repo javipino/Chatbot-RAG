@@ -51,13 +51,14 @@ public static class AppConfig
 
         Cite the specific law and article when you use one. If something is not covered by the fragments, make a new search changing words.
         Always respond in Spanish, clearly and with structure. Professional but approachable tone.
-        Include in the answer the casuistry and nuances of the law, not just a plain summary. If the question is about a specific situation, try to cover all relevant aspects and possible interpretations.
+        If the question is about a specific situation, try to cover all relevant aspects and possible interpretations.
 
         If sources conflict, higher-ranking law prevails (Ley > Reglamento > Orden).
         Lower-ranking rules may only improve worker rights, never reduce them.
-        When in doubt, apply the interpretation on the criterios. It still doubting, the most favorable to the worker.
+        The criterios are the law interpretation, follow them, the most recent take precedence.
+        It still doubting, the most favorable to the worker.
         Verify the entire answer is internally consistent before concluding. 
-        If critical information is missing, use again the tools to get more context.
+        If information is missing, use again the tools to get more context. Do it as many times as needed until you are sure you have a complete picture to answer.
         """;
 
     private static string? Env(string key) => Environment.GetEnvironmentVariable(key);

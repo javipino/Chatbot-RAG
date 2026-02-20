@@ -69,7 +69,7 @@ public class ToolExecutor(
     private async Task<string> SearchCriteriosAsync(System.Text.Json.JsonElement args)
     {
         var query = args.GetProperty("query").GetString() ?? "";
-        var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 5;
+        var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 8;
 
         var embedding = await openAi.EmbedAsync(query);
         var sparse = tfidf.BuildSparseVector(query, "criterios_inss");
