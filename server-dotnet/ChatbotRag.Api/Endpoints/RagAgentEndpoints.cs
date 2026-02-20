@@ -68,6 +68,20 @@ public static class RagAgentEndpoints
         var agentId = await agentManager.GetAgentIdAsync();
         logger.LogInformation("[AGENT] Step 2: Agent ID = {Id}", agentId);
 
+        // Verify agent has tools before running
+        try
+        {
+            var agent = await agentsClient.Administration.GetAgentAsync(agentId);
+            var toolCount = agent.Value?.Tools?.Count ?? -1;
+            var instrLen = agent.Value?.Instructions?.Length ?? 0;
+            logger.LogWarning("[AGENT] Agent verify: tools={ToolCount}, instrLen={InstrLen}, model={Model}",
+                toolCount, instrLen, agent.Value?.Model ?? "null");
+        }
+        catch (Exception ex)
+        {
+            logger.LogError("[AGENT] Failed to verify agent: {Msg}", ex.Message);
+        }
+
         // ── Thread management ──
         PersistentAgentThread thread;
         if (!string.IsNullOrEmpty(req.ThreadId))
@@ -147,7 +161,7 @@ public static class RagAgentEndpoints
                         break;
 
                     default:
-                        logger.LogDebug("[AGENT] Unhandled update: {Kind} ({Type})", update.UpdateKind, update.GetType().Name);
+                        logger.LogWarning("[AGENT] Update: kind={Kind}, type={Type}", update.UpdateKind, update.GetType().Name);
                         break;
                 }
             }

@@ -12,6 +12,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    environment: Chatbot-RAG
 
     steps:
       - name: Checkout code
@@ -41,66 +42,9 @@ jobs:
           OperationID = "dotnet-chatbotrag"
           EOF
 
-      - name: Create deployment package
-        run: |
-          cd publish
-          # Use python to zip with forward slashes (avoids backslash issues)
-          python3 -c "
-          import zipfile, os
-          with zipfile.ZipFile('../deploy-dotnet.zip', 'w', zipfile.ZIP_DEFLATED) as zf:
-              for root, dirs, files in os.walk('.'):
-                  # Skip unnecessary dirs
-                  dirs[:] = [d for d in dirs if d not in ['.git', '__pycache__']]
-                  for file in files:
-                      filepath = os.path.join(root, file)
-                      arcname = os.path.relpath(filepath, '.').replace(os.sep, '/')
-                      zf.write(filepath, arcname)
-          print('ZIP created')
-          "
-          cd ..
-          echo "Package size: $(du -h deploy-dotnet.zip | cut -f1)"
-
-      - name: Deploy to App Service via Kudu
-        env:
-          USERNAME: ${{ secrets.AZURE_WEBAPP_KUDU_USERNAME }}
-          PASSWORD: ${{ secrets.AZURE_WEBAPP_KUDU_PASSWORD }}
-        run: |
-          if [ -z "$USERNAME" ] || [ -z "$PASSWORD" ]; then
-            echo "::error::Missing Kudu credentials secrets"
-            exit 1
-          fi
-
-          echo "Deploying $(du -h deploy-dotnet.zip | cut -f1) to internal-service-hub..."
-
-          HTTP_CODE=$(curl -s -o /tmp/deploy_response.txt -w "%{http_code}" \
-            -X POST \
-            -u "$USERNAME:$PASSWORD" \
-            -H "Content-Type: application/zip" \
-            --data-binary @deploy-dotnet.zip \
-            "https://internal-service-hub.scm.azurewebsites.net/api/zipdeploy?isAsync=true")
-
-          echo "Kudu response: HTTP $HTTP_CODE"
-          cat /tmp/deploy_response.txt || true
-
-          if [ "$HTTP_CODE" != "202" ] && [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::Zipdeploy failed with HTTP $HTTP_CODE"
-            exit 1
-          fi
-
-          echo "Polling deployment status..."
-          for i in $(seq 1 30); do
-            sleep 10
-            STATUS=$(curl -s -u "$USERNAME:$PASSWORD" \
-              "https://internal-service-hub.scm.azurewebsites.net/api/deployments/latest" \
-              | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status',0))" 2>/dev/null || echo "0")
-            echo "  Status: $STATUS (attempt $i/30)"
-            if [ "$STATUS" = "4" ]; then
-              echo "Deployment succeeded!"
-              exit 0
-            fi
-            if [ "$STATUS" = "3" ]; then
-              echo "::error::Deployment failed (status=3)"
-              exit 1
-            fi
-          done
-          echo "::warning::Deployment polling timed out — check App Service logs"
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: internal-service-hub
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: ./publish
