@@ -9,7 +9,7 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 2. **Sentencias** — Jurisprudencia Tribunal Supremo (2,214 chunks)
 3. **Criterios INSS** — Criterios interpretativos (828 chunks)
 
-**URL producción:** https://func-consultas-internas.azurewebsites.net
+**URL producción:** https://internal-service-hub.azurewebsites.net
 
 ---
 
@@ -38,13 +38,13 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 | Azure OpenAI (principal) | `javie-mku5l3k8-swedencentral` | ebook-reader | Sweden Central |
 | Azure OpenAI (reader) | `OpenAI-reader-Javi` | ebook-reader | Sweden Central |
 | Azure AI Foundry project | `javie-mku5l3k8-swedencentral_project` | ebook-reader | Sweden Central |
-| App Service (F1) | `func-consultas-internas` | rg-chatbot-rag | West Europe |
+| App Service (F1) | `internal-service-hub` | rg-chatbot-rag | West Europe |
 | App Service Plan (F1) | `plan-chatbot-rag` | rg-chatbot-rag | West Europe |
 
 ### Recursos eliminados
 - ~~Azure AI Search (`ai-search-javi`)~~ — Eliminado, migrado a Qdrant Cloud
 - ~~Static Web App (`chatbot-rag-javi`)~~ — Eliminado, migrado a App Service
-- ~~App Service (`chatbot-rag-javi`)~~ — Eliminado, renombrado/migrado a `func-consultas-internas`
+- ~~App Service (`chatbot-rag-javi`)~~ — Eliminado, renombrado/migrado a `internal-service-hub`
 - ~~SpeechAI-Javi~~ — Eliminado (no usado)
 
 ### Deployments OpenAI
@@ -249,7 +249,7 @@ Se dispara en push a `master` con cambios en `server-dotnet/**`, `public/**` o e
 **Desactivado** (sin push trigger). Para activar de nuevo: descomentar el bloque `push:` en `.github/workflows/deploy.yml`.
 
 ### App Service Config
-- **App name:** `func-consultas-internas` (antes `chatbot-rag-javi`)
+- **App name:** `internal-service-hub` (antes `func-consultas-internas`)
 - **Runtime:** `DOTNETCORE|10.0`, Linux
 - **Startup command:** `dotnet ChatbotRag.Api.dll`
 - **Plan:** F1 (Free) — migrado de B1 para reducir coste
@@ -265,16 +265,16 @@ Se dispara en push a `master` con cambios en `server-dotnet/**`, `public/**` o e
 az account show --query "{name:name, id:id}" -o table
 
 # Ver variables de entorno del App Service
-az webapp config appsettings list --name func-consultas-internas --resource-group rg-chatbot-rag -o table
+az webapp config appsettings list --name internal-service-hub --resource-group rg-chatbot-rag -o table
 
 # Actualizar una variable de entorno
-az webapp config appsettings set --name func-consultas-internas --resource-group rg-chatbot-rag --settings "KEY=value"
+az webapp config appsettings set --name internal-service-hub --resource-group rg-chatbot-rag --settings "KEY=value"
 
 # Ver logs en tiempo real
-az webapp log tail --name func-consultas-internas --resource-group rg-chatbot-rag
+az webapp log tail --name internal-service-hub --resource-group rg-chatbot-rag
 
 # Descargar logs
-az webapp log download --name func-consultas-internas --resource-group rg-chatbot-rag --log-file app-logs.zip
+az webapp log download --name internal-service-hub --resource-group rg-chatbot-rag --log-file app-logs.zip
 
 # Ver estado de deploys
 gh run list --repo javipino/Chatbot-RAG --limit 5

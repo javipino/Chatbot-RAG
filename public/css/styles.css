@@ -5,11 +5,18 @@
 /* Reset */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html {
+    height: 100%;
+}
+
 body {
     font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
     background: #1e1e1e;
     color: #d4d4d4;
     height: 100vh;
+    height: 100svh;
+    height: 100dvh;
+    min-height: 100dvh;
     display: flex;
     flex-direction: row;
     overflow: hidden;
@@ -21,6 +28,8 @@ body {
 .sidebar {
     width: 260px;
     height: 100vh;
+    height: 100svh;
+    height: 100dvh;
     background: #252526;
     border-right: 1px solid #333;
     display: flex;
@@ -356,7 +365,10 @@ body {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    min-height: 0;
     height: 100vh;
+    height: 100svh;
+    height: 100dvh;
 }
 
 /* Mobile top bar */
@@ -922,9 +934,12 @@ body {
    Responsive
    ==================================== */
 @media (max-width: 768px) {
+    html,
     body {
-        height: 100dvh; /* dynamic viewport height — shrinks when mobile keyboard opens */
-        height: -webkit-fill-available; /* Safari fallback */
+        height: 100vh;
+        height: 100svh;
+        height: 100dvh;
+        min-height: 100dvh;
     }
 
     .sidebar {
@@ -932,6 +947,7 @@ body {
         left: -280px;
         z-index: 100;
         width: 270px;
+        height: 100dvh;
         transition: left 0.25s ease;
     }
     
@@ -946,8 +962,10 @@ body {
     }
 
     .main {
+        height: 100vh;
+        height: 100svh;
         height: 100dvh;
-        height: -webkit-fill-available; /* Safari fallback */
+        min-height: 0;
         width: 100vw;
         max-width: 100vw;
         overflow: hidden;
@@ -958,8 +976,8 @@ body {
         padding: 12px 0 8px;
         max-width: 100%;
         min-height: 0; /* crucial: allows flexbox child to shrink below content size */
-        flex: 1 1 0; /* grow, shrink, zero basis — prevents content from pushing input off screen */
-        padding-bottom: 110px; /* reserve space for fixed composer */
+        flex: 1 1 0%; /* grow, shrink, zero basis — takes all remaining space */
+        overflow-y: auto;
     }
 
     .typing {
@@ -971,12 +989,9 @@ body {
         width: 100%;
         max-width: none;
         margin: 0;
-        position: fixed;
-        left: 0;
-        right: 0;
-        bottom: 0;
+        position: relative;
+        flex-shrink: 0;
         background: #1e1e1e;
-        backdrop-filter: blur(2px);
         z-index: 30;
     }
 

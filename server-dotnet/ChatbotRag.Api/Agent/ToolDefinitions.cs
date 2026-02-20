@@ -8,15 +8,6 @@ namespace ChatbotRag.Api.Agent;
 /// </summary>
 public static class ToolDefinitions
 {
-    public static readonly IReadOnlyList<ToolDefinition> All =
-    [
-        SearchNormativa,
-        SearchSentencias,
-        SearchCriterios,
-        GetArticle,
-        GetRelatedChunks,
-    ];
-
     public static FunctionToolDefinition SearchNormativa { get; } = new(
         name: "search_normativa",
         description: """
@@ -109,4 +100,15 @@ public static class ToolDefinitions
             },
             required = new[] { "chunk_id" }
         }));
+
+    // IMPORTANT: Must be declared AFTER all tool properties to ensure they are
+    // initialized before this collection expression captures their values.
+    public static readonly IReadOnlyList<ToolDefinition> All =
+    [
+        SearchNormativa,
+        SearchSentencias,
+        SearchCriterios,
+        GetArticle,
+        GetRelatedChunks,
+    ];
 }

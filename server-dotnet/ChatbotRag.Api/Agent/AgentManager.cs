@@ -3,7 +3,7 @@ using Azure.AI.Agents.Persistent;
 using Azure.Core;
 using Azure.Identity;
 using System.Net.Http.Headers;
-using System.Net.Http.Json;
+using System.Text.Json;
 using BinaryData = System.BinaryData;
 
 namespace ChatbotRag.Api.Agent;
@@ -78,21 +78,44 @@ public class AgentManager : IAsyncDisposable
 
     private async Task<string> CreateAgentIdAsync()
     {
-        var token = await _credential.GetTokenAsync(new TokenRequestContext(["https://ai.azure.com/.default"]), CancellationToken.None);
+        var token = await _credential.GetTokenAsync(
+            new TokenRequestContext(["https://ai.azure.com/.default"]), CancellationToken.None);
         var endpoint = AppConfig.AiProjectEndpoint.TrimEnd('/');
         var url = $"{endpoint}/assistants?api-version=v1";
+
+        // Build the tools array matching the OpenAI Assistants API format
+        var tools = ToolDefinitions.All.Select(t =>
+        {
+            var ft = (FunctionToolDefinition)t;
+            return new Dictionary<string, object>
+            {
+                ["type"] = "function",
+                ["function"] = new Dictionary<string, object>
+                {
+                    ["name"] = ft.Name,
+                    ["description"] = ft.Description,
+                    ["parameters"] = JsonSerializer.Deserialize<JsonElement>(ft.Parameters.ToString())
+                }
+            };
+        }).ToArray();
+
+        var body = new Dictionary<string, object>
+        {
+            ["model"] = AppConfig.Gpt52Deployment,
+            ["name"] = "ss-expert",
+            ["instructions"] = BuildAgentInstructions(),
+            ["tools"] = tools,
+            ["tool_resources"] = new Dictionary<string, object>()
+        };
+
+        var jsonBody = JsonSerializer.Serialize(body, new JsonSerializerOptions { WriteIndented = false });
+        _logger.LogInformation("Creating agent at {Url}, body length={Len}, tools={ToolCount}",
+            url, jsonBody.Length, tools.Length);
 
         using var http = new HttpClient();
         using var request = new HttpRequestMessage(HttpMethod.Post, url)
         {
-            Content = JsonContent.Create(new
-            {
-                model = AppConfig.Gpt52Deployment,
-                name = "ss-expert",
-                instructions = BuildAgentInstructions(),
-                tools = BuildRawTools(),
-                tool_resources = new { }
-            })
+            Content = new StringContent(jsonBody, System.Text.Encoding.UTF8, "application/json")
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
 
@@ -100,112 +123,28 @@ public class AgentManager : IAsyncDisposable
         var responseBody = await response.Content.ReadAsStringAsync();
 
         if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"Agent creation failed: {(int)response.StatusCode} {response.ReasonPhrase}. Body: {responseBody}");
-
-        using var doc = System.Text.Json.JsonDocument.Parse(responseBody);
-        if (!doc.RootElement.TryGetProperty("id", out var idElement) || string.IsNullOrWhiteSpace(idElement.GetString()))
-            throw new InvalidOperationException($"Agent creation succeeded but no id was returned. Body: {responseBody}");
-
-        return idElement.GetString()!;
-    }
-
-    private static object[] BuildRawTools() =>
-    [
-        new
         {
-            type = "function",
-            function = new
-            {
-                name = "search_normativa",
-                description = "Search the Spanish labor and Social Security legislation database (BOE, ET, LGSS, LPRL, etc.) using hybrid semantic + keyword search.",
-                parameters = new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        query = new { type = "string", description = "Search keywords (3-6 technical-legal terms in Spanish)" },
-                        top_k = new { type = "integer", description = "Number of results to return (default 8, max 15)", @default = 8 }
-                    },
-                    required = new[] { "query" }
-                }
-            }
-        },
-        new
-        {
-            type = "function",
-            function = new
-            {
-                name = "search_sentencias",
-                description = "Search the Supreme Court case law collection on Social Security and labor law.",
-                parameters = new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        query = new { type = "string", description = "Case law search keywords (in Spanish)" },
-                        top_k = new { type = "integer", description = "Number of results (default 5, max 10)", @default = 5 }
-                    },
-                    required = new[] { "query" }
-                }
-            }
-        },
-        new
-        {
-            type = "function",
-            function = new
-            {
-                name = "search_criterios",
-                description = "Search the INSS management criteria collection (Criterios de Gestión del INSS). Official interpretive criteria on how to apply Social Security regulations in practice. Use for benefits calculation, eligibility, administrative procedures, or the INSS's official interpretation of a regulation.",
-                parameters = new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        query = new { type = "string", description = "Search keywords about INSS criteria (in Spanish)" },
-                        top_k = new { type = "integer", description = "Number of results (default 5, max 10)", @default = 5 }
-                    },
-                    required = new[] { "query" }
-                }
-            }
-        },
-        new
-        {
-            type = "function",
-            function = new
-            {
-                name = "get_article",
-                description = "Fetch a specific article from the regulations by its number and law name.",
-                parameters = new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        article_number = new { type = "string", description = "Article number. E.g.: '48', '205.1'" },
-                        law_name = new { type = "string", description = "Law name. E.g.: 'Estatuto de los Trabajadores', 'LGSS'" }
-                    },
-                    required = new[] { "article_number", "law_name" }
-                }
-            }
-        },
-        new
-        {
-            type = "function",
-            function = new
-            {
-                name = "get_related_chunks",
-                description = "Fetch the normative chunks referenced by a given chunk.",
-                parameters = new
-                {
-                    type = "object",
-                    properties = new
-                    {
-                        chunk_id = new { type = "string", description = "Chunk ID (UUID or integer) to get references from" }
-                    },
-                    required = new[] { "chunk_id" }
-                }
-            }
+            _logger.LogError("Agent creation failed: {Status} {Reason}. Body: {Body}",
+                (int)response.StatusCode, response.ReasonPhrase, responseBody);
+            throw new InvalidOperationException(
+                $"Agent creation failed: {(int)response.StatusCode} {response.ReasonPhrase}. Body: {responseBody}");
         }
-    ];
+
+        using var doc = JsonDocument.Parse(responseBody);
+        if (!doc.RootElement.TryGetProperty("id", out var idElement) ||
+            string.IsNullOrWhiteSpace(idElement.GetString()))
+            throw new InvalidOperationException(
+                $"Agent creation succeeded but no id was returned. Body: {responseBody}");
+
+        var agentId = idElement.GetString()!;
+
+        // Log tool count from response
+        var respToolCount = doc.RootElement.TryGetProperty("tools", out var toolsEl)
+            ? toolsEl.GetArrayLength() : -1;
+        _logger.LogInformation("Agent created: {Id}, response tools={ToolCount}", agentId, respToolCount);
+
+        return agentId;
+    }
 
     private static string BuildAgentInstructions() =>
         $$"""
@@ -218,7 +157,7 @@ public class AgentManager : IAsyncDisposable
 
         ### Search Strategy (priority order)
         1. **search_normativa** — Primary source. Search legislation by keywords (3-6 technical-legal terms in Spanish).
-        2. **search_criterios** — Very important. Search INSS management criteria: official interpretations on how to apply regulations in practice (benefits calculation, eligibility, administrative procedures).
+        2. **search_criterios** — Very important. Search INSS management criteria: official interpretations on how to apply regulations in practice (benefits calculation, eligibility, administrative procedures) (3-6 technical-legal terms in Spanish).
         3. **get_article** — When you know the exact article number and law name.
         4. **get_related_chunks** — To expand cross-references from a chunk you've already found.
         5. If the question involves multiple concepts, make separate searches, one per concept.
