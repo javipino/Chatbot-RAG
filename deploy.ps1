@@ -4,7 +4,7 @@
 
 $ErrorActionPreference = "Stop"
 
-$appName = "chatbot-rag-javi"
+$appName = "func-consultas-internas"
 $resourceGroup = "rg-chatbot-rag"
 $stagingDir = (Join-Path $PSScriptRoot ".deploy-staging")
 $zipFile = (Join-Path $PSScriptRoot ".deploy.zip")

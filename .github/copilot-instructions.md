@@ -2,14 +2,14 @@
 
 ## Proyecto
 
-Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y de Seguridad Social española. Chat multi-modelo con dos backends desplegados en Azure App Service (B1).
+Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y de Seguridad Social española. Chat multi-modelo con backend .NET desplegado en Azure App Service (F1).
 
 **Fuentes de datos (3 colecciones en Qdrant Cloud):**
-1. **Normativa** — BOE "Código Laboral y de la Seguridad Social" (5,648 chunks enriquecidos)
-2. **Sentencias** — Jurisprudencia Tribunal Supremo (pendiente)
-3. **Criterios INSS** — Criterios interpretativos (pendiente)
+1. **Normativa** — BOE "Código Laboral y de la Seguridad Social" (5,301 chunks enriquecidos)
+2. **Sentencias** — Jurisprudencia Tribunal Supremo (2,214 chunks)
+3. **Criterios INSS** — Criterios interpretativos (828 chunks)
 
-**URL producción:** https://chatbot-rag-javi.azurewebsites.net
+**URL producción:** https://func-consultas-internas.azurewebsites.net
 
 ---
 
@@ -22,7 +22,7 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 
 ### Presupuesto
 - **Crédito Azure:** 50€ máximo. No crear recursos de pago sin consultar.
-- App Service **B1** (~€13/mes): sin límite de CPU. Se migró de F1 porque el backend .NET consume más CPU en arranque frío.
+- App Service **F1** (free tier): funcional tras optimizaciones de arranque. Se migró de B1 (~€13/mes) para reducir coste.
 - Azure AI Search fue eliminado por coste. Usar Qdrant Cloud (free tier).
 
 ### Secretos
@@ -38,12 +38,13 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 | Azure OpenAI (principal) | `javie-mku5l3k8-swedencentral` | ebook-reader | Sweden Central |
 | Azure OpenAI (reader) | `OpenAI-reader-Javi` | ebook-reader | Sweden Central |
 | Azure AI Foundry project | `javie-mku5l3k8-swedencentral_project` | ebook-reader | Sweden Central |
-| App Service (B1) | `chatbot-rag-javi` | rg-chatbot-rag | West Europe |
-| App Service Plan (B1) | `plan-chatbot-rag` | rg-chatbot-rag | West Europe |
+| App Service (F1) | `func-consultas-internas` | rg-chatbot-rag | West Europe |
+| App Service Plan (F1) | `plan-chatbot-rag` | rg-chatbot-rag | West Europe |
 
 ### Recursos eliminados
 - ~~Azure AI Search (`ai-search-javi`)~~ — Eliminado, migrado a Qdrant Cloud
 - ~~Static Web App (`chatbot-rag-javi`)~~ — Eliminado, migrado a App Service
+- ~~App Service (`chatbot-rag-javi`)~~ — Eliminado, renombrado/migrado a `func-consultas-internas`
 - ~~SpeechAI-Javi~~ — Eliminado (no usado)
 
 ### Deployments OpenAI
@@ -80,7 +81,7 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 ### Stack activo (producción)
 - **Backend .NET:** ASP.NET Core 10 Minimal API — `server-dotnet/ChatbotRag.Api/`
 - **Frontend:** Vanilla JS con ES modules — `public/` (servido como static files por el backend .NET desde `wwwroot/`)
-- **Hosting:** Azure App Service B1, Linux, runtime `DOTNETCORE|10.0`
+- **Hosting:** Azure App Service F1 (free tier), Linux, runtime `DOTNETCORE|10.0`
 - **Startup command:** `dotnet ChatbotRag.Api.dll`
 - **Vector DB:** Qdrant Cloud (free tier)
 - **LLMs:** Azure OpenAI (GPT-5.2 + GPT-5 Nano + text-embedding-3-small)
@@ -90,33 +91,32 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 
 ```
 Query → 1.Expand(Nano) → 2.Embed(e3s) → 3.Sparse(TF-IDF)
-     → 4.Search(Qdrant ×3 colecciones, híbrido RRF)
+     → 4.Search(Qdrant ×2 colecciones, híbrido RRF)
      → 5b.Refs(filtradas, score heredado) → Cap(sort+top25) → 5.Answer+Eval(GPT-5.2)
 ```
 
 - **Query expansion:** GPT-5 Nano genera 1-4 búsquedas de keywords (3-6 palabras)
 - **Context carryover:** Chunks de turnos anteriores se arrastran automáticamente (score=0.5)
 - **Búsqueda híbrida:** Dense (semántica) + Sparse (TF-IDF/BM25) con fusión RRF
-- **Cross-collection:** 3 colecciones en paralelo, ponderación (normativa×1.0, sentencias×0.8, criterios×0.9)
+- **Cross-collection (pipeline):** 2 colecciones en paralelo, ponderación (normativa×1.0, criterios_inss×0.9). Sentencias excluidas del pipeline (demasiado ruidosas); disponibles solo vía herramienta del agente.
 - **Reference expansion:** Refs pre-computadas filtradas (dirección ascendente, siblings, cap 3/chunk, cap global 15 refs). Score heredado = padre × 0.8
 - **Scoring & Cap:** Todos los chunks se puntúan con `_score`, se ordenan por score desc y se toman top 25 (`MAX_CHUNKS_TO_MODEL`)
 - **Unified answer:** GPT-5.2 responde + reporta USED/DROP/NEED en una sola llamada
 - **DROP → carryover:** Chunks marcados como DROP no se arrastran a turnos siguientes
-- **Vocabulario TF-IDF:** JSON estático desplegado con el servidor (`server-dotnet/ChatbotRag.Api/Data/tfidf_vocabulary.json`)
+- **Vocabulario TF-IDF:** 3 JSONs estáticos por colección desplegados con el servidor (`server-dotnet/ChatbotRag.Api/Data/tfidf_vocabulary*.json`)
 
 ### Agent Mode (Azure AI Foundry)
 
-⚠️ **Estado: inestable** — `CreateAgentAsync` falla con `Unknown fields: model, name, instructions` (incompatibilidad SDK ↔ API endpoint de AI Foundry).
-
-Modo alternativo al pipeline. Usa `AgentManager` + `ToolExecutor` para crear un agente con herramientas:
-- `search_normativa` — busca en Qdrant
-- `search_sentencias` — busca en jurisprudencia
-- `get_article` — fetch de artículo concreto
+Modo alternativo al pipeline. Usa `AgentManager` + `ToolExecutor` para crear un agente con 5 herramientas:
+- `search_normativa` — busca en colección normativa (prioridad 1)
+- `search_criterios` — busca en criterios interpretativos INSS (prioridad 2)
+- `search_sentencias` — busca en jurisprudencia TS (⚠️ uso excepcional)
+- `get_article` — fetch de artículo concreto por nº y ley
 - `get_related_chunks` — expande referencias de un chunk
 
 El agente llama a las herramientas iterativamente. Endpoint: `POST /api/rag-agent` (SSE streaming).
 
-**MSI configurada:** App Service tiene System-Assigned Identity (`5d5eeccf-ed1d-4098-b72a-e7cb458f94b8`) con roles `Azure AI Developer` + `Azure AI User` en `javie-mku5l3k8-swedencentral` hub.
+**MSI configurada:** App Service tiene System-Assigned Identity con roles `Azure AI Developer` + `Azure AI User` en `javie-mku5l3k8-swedencentral` hub.
 
 ### Endpoints API (.NET)
 
@@ -170,7 +170,9 @@ El frontend (`api.js` → `callStreaming()`) maneja estos eventos mostrando toke
 │       │   ├── ToolDefinitions.cs
 │       │   └── ToolExecutor.cs  # Ejecuta herramientas RAG del agente
 │       ├── Data/
-│       │   └── tfidf_vocabulary.json
+│       │   ├── tfidf_vocabulary.json          # Normativa (334KB, 5301 chunks)
+│       │   ├── tfidf_vocabulary_sentencias.json  # Sentencias (846KB, 2214 chunks)
+│       │   └── tfidf_vocabulary_criterios.json   # Criterios INSS (259KB, 828 chunks)
 │       ├── Endpoints/
 │       │   ├── AuthHelper.cs    # Valida x-api-key header
 │       │   ├── ChatEndpoints.cs # POST /api/chat
@@ -191,13 +193,22 @@ El frontend (`api.js` → `callStreaming()`) maneja estos eventos mostrando toke
 │           ├── QdrantService.cs # searchCollection(), fetchByIds()
 │           └── TfidfService.cs  # Sparse vector computation
 ├── src/scripts/                 # Offline processing (Python + Node.js)
-│   ├── extract_chunks.py        # Extrae texto del PDF, segmenta por artículo
-│   ├── clean_chunks_v2.py       # Limpia headers/footers del BOE
-│   ├── enhance_chunks.py        # Añade jerarquía capítulo/título/sección
-│   ├── enrich_chunks.py         # Enriquece con GPT-5 Nano
-│   ├── build_tfidf.js           # Genera vocabulario IDF
-│   ├── upload_to_qdrant.js      # Embede + sparse + sube a Qdrant
-│   ├── add_refs.js              # Genera refs[] pre-computados
+│   ├── extract_chunks.py        # Normativa: extrae texto del PDF, segmenta por artículo
+│   ├── clean_chunks_v2.py       # Normativa: limpia headers/footers del BOE
+│   ├── enhance_chunks.py        # Normativa: añade jerarquía capítulo/título/sección
+│   ├── enrich_chunks.py         # Normativa: enriquece con GPT-5 Nano
+│   ├── build_tfidf.js           # Normativa: genera vocabulario IDF
+│   ├── upload_to_qdrant.js      # Normativa: embede + sparse + sube a Qdrant
+│   ├── add_refs.js              # Normativa: genera refs[] pre-computados
+│   ├── extract_sentencias.js    # Sentencias: extrae de PDFs vLex
+│   ├── enrich_sentencias.js     # Sentencias: enriquece con GPT-5 Nano
+│   ├── build_tfidf_sentencias.js # Sentencias: genera vocabulario IDF
+│   ├── upload_sentencias_qdrant.js # Sentencias: sube a Qdrant
+│   ├── extract_criterios.js     # Criterios: extrae de PDF
+│   ├── enrich_criterios.js      # Criterios: enriquece con GPT-5 Nano
+│   ├── postprocess_criterios.js # Criterios: normaliza refs, postproceso v3
+│   ├── build_tfidf_criterios.js # Criterios: genera vocabulario IDF
+│   ├── upload_criterios_qdrant.js # Criterios: sube a Qdrant
 │   ├── transcribe_audio.js      # Transcribe audio OGG/MP3→WAV via Azure Speech
 │   └── (otros: download, fix, test, check scripts)
 ├── data/                        # Datos locales (no commiteados, en .gitignore)
@@ -238,9 +249,10 @@ Se dispara en push a `master` con cambios en `server-dotnet/**`, `public/**` o e
 **Desactivado** (sin push trigger). Para activar de nuevo: descomentar el bloque `push:` en `.github/workflows/deploy.yml`.
 
 ### App Service Config
+- **App name:** `func-consultas-internas` (antes `chatbot-rag-javi`)
 - **Runtime:** `DOTNETCORE|10.0`, Linux
 - **Startup command:** `dotnet ChatbotRag.Api.dll`
-- **Plan:** B1 (Basic) — sin límite CPU
+- **Plan:** F1 (Free) — migrado de B1 para reducir coste
 - `SCM_DO_BUILD_DURING_DEPLOYMENT=false`
 - `WEBSITE_RUN_FROM_PACKAGE=0`
 
@@ -253,16 +265,16 @@ Se dispara en push a `master` con cambios en `server-dotnet/**`, `public/**` o e
 az account show --query "{name:name, id:id}" -o table
 
 # Ver variables de entorno del App Service
-az webapp config appsettings list --name chatbot-rag-javi --resource-group rg-chatbot-rag -o table
+az webapp config appsettings list --name func-consultas-internas --resource-group rg-chatbot-rag -o table
 
 # Actualizar una variable de entorno
-az webapp config appsettings set --name chatbot-rag-javi --resource-group rg-chatbot-rag --settings "KEY=value"
+az webapp config appsettings set --name func-consultas-internas --resource-group rg-chatbot-rag --settings "KEY=value"
 
 # Ver logs en tiempo real
-az webapp log tail --name chatbot-rag-javi --resource-group rg-chatbot-rag
+az webapp log tail --name func-consultas-internas --resource-group rg-chatbot-rag
 
 # Descargar logs
-az webapp log download --name chatbot-rag-javi --resource-group rg-chatbot-rag --log-file app-logs.zip
+az webapp log download --name func-consultas-internas --resource-group rg-chatbot-rag --log-file app-logs.zip
 
 # Ver estado de deploys
 gh run list --repo javipino/Chatbot-RAG --limit 5
@@ -294,7 +306,7 @@ dotnet publish server-dotnet/ChatbotRag.Api/ChatbotRag.Api.csproj -c Release -o 
 - **Qdrant free tier:** 1GB RAM, sin pausa por inactividad
 - **TF-IDF vocabulary:** generado offline por `build_tfidf.js`, desplegado con el servidor
 - **RRF k=2** en Qdrant (default)
-- **App Service B1:** sin límite CPU, ~€13/mes. Migrado de F1 porque el .NET consume CPU en arranque frío.
+- **App Service F1:** free tier. Migrado de vuelta desde B1 tras optimizaciones. Limitado a 60 min CPU/día.
 - **ES modules (frontend):** `<script type="module">`, imports entre módulos. No bundler.
 - **`AIProjectClient`** (Azure.AI.Projects 1.1.0): solo acepta `AuthenticationTokenProvider`. Usar `DefaultAzureCredential` vía Azure.Identity. En producción requiere Managed Identity con rol **Azure AI Developer** en el proyecto Foundry.
 - **`dotnet publish` sin `-r linux-x64`:** produce IL portable (framework-dependent). Con `-r linux-x64` produce binario nativo que el contenedor App Service no puede ejecutar como DLL.

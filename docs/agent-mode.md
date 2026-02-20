@@ -114,11 +114,19 @@ Tienes acceso a una base de datos de normativa laboral y de Seguridad Social esp
 Debes usar las tools para buscar información ANTES de responder.
 
 ### Estrategia de búsqueda
-1. Usa search_normativa para buscar por palabras clave concisas (3-6 palabras técnico-legales).
-2. Si la pregunta involucra múltiples conceptos, haz varias búsquedas, una por concepto.
-3. Si conoces el artículo exacto, usa get_article para obtenerlo directamente.
-4. Si un chunk tiene referencias relevantes, usa get_related_chunks para expandirlas.
-5. Si los resultados son insuficientes, reformula con sinónimos o términos más específicos.
+1. Usa search_normativa para buscar en normativa laboral y de SS (prioridad 1).
+2. Usa search_criterios para buscar criterios interpretativos del INSS (prioridad 2).
+3. Si la pregunta involucra múltiples conceptos, haz varias búsquedas, una por concepto.
+4. Si conoces el artículo exacto, usa get_article para obtenerlo directamente.
+5. Si un chunk tiene referencias relevantes, usa get_related_chunks para expandirlas.
+6. Si los resultados son insuficientes, reformula con sinónimos o términos más específicos.
+
+### ⚠️ search_sentencias — USO EXCEPCIONAL
+search_sentencias busca jurisprudencia del Tribunal Supremo. La mayoría de su contenido ya está resumido en los criterios INSS.
+Usarla SOLO cuando:
+- El usuario pide explícitamente una sentencia o jurisprudencia concreta.
+- Necesitas la cita exacta (nº recurso, fecha, sala) de un precedente.
+- Los criterios INSS no cubren el tema y se necesita interpretación judicial.
 
 ### Cuándo re-buscar
 - Si los fragmentos obtenidos no responden completamente la pregunta, busca más.
@@ -138,7 +146,7 @@ Debes usar las tools para buscar información ANTES de responder.
 ## Tools disponibles
 
 ### `search_normativa`
-**Propósito:** Búsqueda híbrida (semántica + TF-IDF) sobre la colección `normativa` y las demás colecciones del Qdrant (cross-collection). Es la herramienta principal para encontrar artículos relevantes.
+**Propósito:** Búsqueda híbrida (semántica + TF-IDF) sobre la colección `normativa` en Qdrant. Es la herramienta principal para encontrar artículos de leyes laborales y de Seguridad Social.
 
 **Parámetros:**
 | Parámetro | Tipo | Obligatorio | Descripción |
@@ -146,7 +154,7 @@ Debes usar las tools para buscar información ANTES de responder.
 | `query` | string | ✅ | Palabras clave técnico-legales (3-6 términos) |
 | `top_k` | integer | ❌ | Nº de resultados (default 8, max 15) |
 
-**Implementación:** `embed(query)` → `buildSparseVector(query)` → `SearchAllCollectionsAsync()` (todas las colecciones, ponderadas)
+**Implementación:** `embed(query)` → `buildSparseVector(query, "normativa")` → `SearchCollectionAsync("normativa", ...)`
 
 **Resultado:** JSON array de `ChunkToolResult`:
 ```json
@@ -166,8 +174,21 @@ Debes usar las tools para buscar información ANTES de responder.
 
 ---
 
+### `search_criterios`
+**Propósito:** Búsqueda en la colección `criterios_inss` (criterios interpretativos del INSS). Segunda fuente en prioridad tras normativa. Contiene interpretaciones oficiales de la administración sobre prestaciones de SS.
+
+**Parámetros:**
+| Parámetro | Tipo | Obligatorio | Descripción |
+|-----------|------|-------------|-------------|
+| `query` | string | ✅ | Palabras clave de búsqueda |
+| `top_k` | integer | ❌ | Nº de resultados (default 5, max 10) |
+
+**Implementación:** `embed(query)` → `buildSparseVector(query, "criterios_inss")` → `SearchCollectionAsync("criterios_inss", ...)`
+
+---
+
 ### `search_sentencias`
-**Propósito:** Búsqueda en la colección `sentencias` (jurisprudencia Tribunal Supremo). Útil para precedentes judiciales o interpretaciones de tribunales.
+**Propósito:** Búsqueda en la colección `sentencias` (jurisprudencia Tribunal Supremo). ⚠️ **Uso excepcional** — la mayor parte de su contenido ya está resumido en criterios INSS.
 
 **Parámetros:**
 | Parámetro | Tipo | Obligatorio | Descripción |
@@ -175,9 +196,12 @@ Debes usar las tools para buscar información ANTES de responder.
 | `query` | string | ✅ | Palabras clave de búsqueda jurisprudencial |
 | `top_k` | integer | ❌ | Nº de resultados (default 5, max 10) |
 
-**Implementación:** `embed(query)` → `buildSparseVector(query)` → `SearchCollectionAsync("sentencias", ...)`
+**Implementación:** `embed(query)` → `buildSparseVector(query, "sentencias")` → `SearchCollectionAsync("sentencias", ...)`
 
-> ⚠️ La colección `sentencias` está pendiente de poblar. Devuelve 0 resultados hasta que se suba jurisprudencia.
+**Casos de uso permitidos:**
+- El usuario pide explícitamente una sentencia o jurisprudencia concreta
+- Se necesita la cita exacta (nº recurso, fecha, sala) de un precedente
+- Los criterios INSS no cubren el tema y se necesita interpretación judicial
 
 ---
 
@@ -254,7 +278,7 @@ El frontend usa `api.js → callStreaming()` para consumir el stream. Los evento
 | Archivo | Responsabilidad |
 |---------|----------------|
 | `Agent/AgentManager.cs` | Lifecycle del agente: crear, reutilizar, threads |
-| `Agent/ToolDefinitions.cs` | Definiciones de las 4 function tools (esquemas JSON) |
+| `Agent/ToolDefinitions.cs` | Definiciones de las 5 function tools (esquemas JSON) |
 | `Agent/ToolExecutor.cs` | Ejecuta las tool calls: llama a OpenAI/Qdrant/TfIdf |
 | `Endpoints/RagAgentEndpoints.cs` | Orquesta el streaming run, SSE, thread management |
 | `Endpoints/SseHelper.cs` | Escritura de eventos SSE al response |
@@ -264,7 +288,6 @@ El frontend usa `api.js → callStreaming()` para consumir el stream. Los evento
 
 ## Limitaciones conocidas
 
-- **`search_sentencias` y `search_criterios_inss`:** Las colecciones `sentencias` y `criterios_inss` están pendientes de datos. Las búsquedas devuelven vacío hasta que se suban documentos con `upload_to_qdrant.js`.
-- **Managed Identity en producción:** Sin la MSI configurada, el agente falla con `AuthenticationFailedException` al arrancar. El pipeline RAG no se ve afectado.
 - **Latencia:** Cada ronda de tool calls añade ~1-3s. Preguntas complejas pueden requerir 3-4 rondas → 5-10s antes del primer token.
 - **Huérfanos en Foundry:** Si la app se reinicia sin que `DisposeAsync()` se ejecute (force-stop), el agente anterior queda registrado en Foundry. Limpiar manualmente desde Azure AI Studio si es necesario.
+- **Managed Identity en producción:** Sin la MSI configurada, el agente falla con `AuthenticationFailedException` al arrancar. El pipeline RAG no se ve afectado.

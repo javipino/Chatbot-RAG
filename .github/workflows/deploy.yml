@@ -50,7 +50,7 @@ jobs:
             exit 1
           fi
 
-          echo "Deploying $(du -h deploy.zip | cut -f1) to chatbot-rag-javi..."
+          echo "Deploying $(du -h deploy.zip | cut -f1) to func-consultas-internas..."
 
           # Deploy via Kudu zipdeploy API (async, then poll)
           HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
@@ -58,7 +58,7 @@ jobs:
             -u "$USERNAME:$PASSWORD" \
             -H "Content-Type: application/zip" \
             --data-binary @deploy.zip \
-            "https://chatbot-rag-javi.scm.azurewebsites.net/api/zipdeploy?isAsync=true")
+            "https://func-consultas-internas.scm.azurewebsites.net/api/zipdeploy?isAsync=true")
 
           echo "Kudu response: HTTP $HTTP_CODE"
           if [ "$HTTP_CODE" != "202" ] && [ "$HTTP_CODE" != "200" ]; then
@@ -71,7 +71,7 @@ jobs:
           for i in $(seq 1 24); do
             sleep 5
             STATUS=$(curl -s -u "$USERNAME:$PASSWORD" \
-              "https://chatbot-rag-javi.scm.azurewebsites.net/api/deployments" \
+              "https://func-consultas-internas.scm.azurewebsites.net/api/deployments" \
               | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0].get('status',0), d[0].get('complete',False))" 2>/dev/null || echo "0 False")
             echo "  [$((i*5))s] status=$STATUS"
             if echo "$STATUS" | grep -q "True"; then

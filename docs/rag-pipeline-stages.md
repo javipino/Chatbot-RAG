@@ -16,9 +16,9 @@ Query del usuario
   │
   ├─ Para CADA query (en paralelo):
   │   ├─ Stage 2: Embedding ────────────── text-embedding-3-small (Reader)
-  │   ├─ Stage 3: Sparse Vector ────────── TF-IDF/BM25 (local)
-  │   └─ Stage 4: Hybrid Search ────────── Qdrant Cloud (dense + sparse, RRF)
-  │         └─ 4b: Cross-collection ────── 3 colecciones en paralelo
+  │   ├─ Stage 3: Sparse Vector ──────── TF-IDF/BM25 (local, per-collection vocab)
+  │   └─ Stage 4: Hybrid Search ──────── Qdrant Cloud (dense + sparse, RRF)
+  │         └─ 4b: Cross-collection ──── 2 colecciones en paralelo (normativa + criterios_inss)
   │
   ├─ Merge carryover + search results + dedup
   │
@@ -163,7 +163,7 @@ Los resultados se deduplican por ID (manteniendo el score más alto) y se toman 
 **No usa modelo.** Proceso local:
 1. Tokenización: lowercase, normalización de acentos, eliminación de stopwords españolas
 2. Stemming: sufijos españoles (amiento, aciones, mente, ción, etc.)
-3. Cálculo BM25: `TF * IDF` usando vocabulario pre-computado (`tfidf_vocabulary.json`)
+3. Cálculo BM25: `TF * IDF` usando vocabulario pre-computado (per-collection: `tfidf_vocabulary.json`, `tfidf_vocabulary_sentencias.json`, `tfidf_vocabulary_criterios.json`)
 4. Output: `{ indices: [int], values: [float] }` — sparse vector para Qdrant
 
 ---
@@ -190,12 +190,11 @@ Los resultados se deduplican por ID (manteniendo el score más alto) y se toman 
 
 ### 4b — Cross-collection
 
-Se busca en 3 colecciones en paralelo con pesos:
+Se busca en 2 colecciones en paralelo con pesos (sentencias excluidas del pipeline — disponibles solo vía agent tool):
 
 | Colección | Peso |
 |-----------|------|
 | `normativa` | 1.0 |
-| `sentencias` | 0.8 |
 | `criterios_inss` | 0.9 |
 
 Los resultados se mezclan por `score × weight` y se toman los **top 20**.
