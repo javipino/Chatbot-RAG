@@ -244,6 +244,13 @@ public class AgentManager : IAsyncDisposable
         - "finiquito" → "liquidación haberes extinción contrato"
         """;
 
+    /// <summary>Invalidate the cached agent ID so the next GetAgentIdAsync() call recreates it.</summary>
+    public void InvalidateAgent()
+    {
+        _agentId = null;
+        _logger.LogWarning("Agent ID invalidated — will recreate on next request");
+    }
+
     /// <summary>Create a new thread for a conversation.</summary>
     public async Task<PersistentAgentThread> CreateThreadAsync() =>
         await _agentsClient.Threads.CreateThreadAsync();
