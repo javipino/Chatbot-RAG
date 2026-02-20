@@ -27,6 +27,7 @@ public class ToolExecutor(
             {
                 "search_normativa" => await SearchNormativaAsync(args),
                 "search_sentencias" => await SearchSentenciasAsync(args),
+                "search_criterios" => await SearchCriteriosAsync(args),
                 "get_article" => await GetArticleAsync(args),
                 "get_related_chunks" => await GetRelatedChunksAsync(args),
                 _ => $"{{\"error\": \"Unknown tool: {toolName}\"}}"
@@ -45,8 +46,8 @@ public class ToolExecutor(
         var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 8;
 
         var embedding = await openAi.EmbedAsync(query);
-        var sparse = tfidf.BuildSparseVector(query);
-        var results = await qdrant.SearchAllCollectionsAsync(embedding, sparse, Math.Clamp(topK, 1, 15));
+        var sparse = tfidf.BuildSparseVector(query, "normativa");
+        var results = await qdrant.SearchCollectionAsync("normativa", embedding, sparse, Math.Clamp(topK, 1, 15));
 
         logger.LogInformation("[AGENT] search_normativa({Query}) → {Count} chunks", query, results.Count);
         return System.Text.Json.JsonSerializer.Serialize(results.Select(ChunkToToolResult));
@@ -58,10 +59,23 @@ public class ToolExecutor(
         var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 5;
 
         var embedding = await openAi.EmbedAsync(query);
-        var sparse = tfidf.BuildSparseVector(query);
+        var sparse = tfidf.BuildSparseVector(query, "sentencias");
         var results = await qdrant.SearchCollectionAsync("sentencias", embedding, sparse, Math.Clamp(topK, 1, 10));
 
         logger.LogInformation("[AGENT] search_sentencias({Query}) → {Count} chunks", query, results.Count);
+        return System.Text.Json.JsonSerializer.Serialize(results.Select(ChunkToToolResult));
+    }
+
+    private async Task<string> SearchCriteriosAsync(System.Text.Json.JsonElement args)
+    {
+        var query = args.GetProperty("query").GetString() ?? "";
+        var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 5;
+
+        var embedding = await openAi.EmbedAsync(query);
+        var sparse = tfidf.BuildSparseVector(query, "criterios_inss");
+        var results = await qdrant.SearchCollectionAsync("criterios_inss", embedding, sparse, Math.Clamp(topK, 1, 10));
+
+        logger.LogInformation("[AGENT] search_criterios({Query}) → {Count} chunks", query, results.Count);
         return System.Text.Json.JsonSerializer.Serialize(results.Select(ChunkToToolResult));
     }
 

@@ -154,6 +154,25 @@ public class AgentManager : IAsyncDisposable
             type = "function",
             function = new
             {
+                name = "search_criterios",
+                description = "Search the INSS management criteria collection (Criterios de Gestión del INSS). Official interpretive criteria on how to apply Social Security regulations in practice. Use for benefits calculation, eligibility, administrative procedures, or the INSS's official interpretation of a regulation.",
+                parameters = new
+                {
+                    type = "object",
+                    properties = new
+                    {
+                        query = new { type = "string", description = "Search keywords about INSS criteria (in Spanish)" },
+                        top_k = new { type = "integer", description = "Number of results (default 5, max 10)", @default = 5 }
+                    },
+                    required = new[] { "query" }
+                }
+            }
+        },
+        new
+        {
+            type = "function",
+            function = new
+            {
                 name = "get_article",
                 description = "Fetch a specific article from the regulations by its number and law name.",
                 parameters = new
@@ -174,7 +193,7 @@ public class AgentManager : IAsyncDisposable
             function = new
             {
                 name = "get_related_chunks",
-                description = "Fetch the chunks referenced by a given chunk.",
+                description = "Fetch the normative chunks referenced by a given chunk.",
                 parameters = new
                 {
                     type = "object",
@@ -197,17 +216,24 @@ public class AgentManager : IAsyncDisposable
         You have access to a database of Spanish labor and Social Security legislation.
         You MUST use tools to search for information BEFORE answering. Never answer without consulting the database.
 
-        ### Search Strategy
-        1. Use **search_normativa** to search by keywords. Each search should be concise (3-6 technical-legal terms in Spanish).
-        2. If the question involves multiple concepts, make separate searches, one per concept.
-        3. If you know the exact article you need, use **get_article** to fetch it directly.
-        4. If a chunk has relevant references, use **get_related_chunks** to expand them.
-        5. If results are insufficient, reformulate the search with synonyms or more specific terms.
+        ### Search Strategy (priority order)
+        1. **search_normativa** — Primary source. Search legislation by keywords (3-6 technical-legal terms in Spanish).
+        2. **search_criterios** — Very important. Search INSS management criteria: official interpretations on how to apply regulations in practice (benefits calculation, eligibility, administrative procedures).
+        3. **get_article** — When you know the exact article number and law name.
+        4. **get_related_chunks** — To expand cross-references from a chunk you've already found.
+        5. If the question involves multiple concepts, make separate searches, one per concept.
+        6. If results are insufficient, reformulate with synonyms or more specific terms.
+
+        ### ⚠️ search_sentencias — USE ONLY EXCEPTIONALLY
+        **Do NOT use search_sentencias by default.** The key content from Supreme Court rulings is already
+        summarized and incorporated into the INSS criteria (search_criterios). Only use search_sentencias when:
+        - A criterio explicitly references a specific court ruling (STS) and you need the full judicial reasoning.
+        - The user explicitly asks about a particular sentencia or court case.
+        - Normativa + criterios are insufficient and you suspect there is relevant case law not yet covered by criteria.
 
         ### When to Re-search
-        - If the fragments obtained don't fully answer the question, search more.
+        - If the fragments obtained don't fully answer the question, search more (normativa or criterios first).
         - If the question mentions a specific article or law that didn't appear, use get_article.
-        - Maximum 6 rounds of tool calls per question.
 
         ### Colloquial → Legal Term Equivalences
         - "baja de maternidad" → "suspensión contrato nacimiento cuidado menor"

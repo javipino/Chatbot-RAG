@@ -36,12 +36,14 @@ public class SearchStage(OpenAiService openAi, TfidfService tfidf, QdrantService
             var embedding = await openAi.EmbedAsync(query);
             log("S2-EMBED", $"Query[{qi}] embedded → {embedding.Length} dims");
 
-            var sparse = tfidf.BuildSparseVector(query);
-            log("S3-SPARSE", sparse != null
-                ? $"Query[{qi}] sparse → {sparse.Indices.Length} terms"
-                : $"Query[{qi}] sparse → NULL (no matching terms)");
+            QdrantSparseQuery? SparseBuilder(string collection)
+            {
+                var s = tfidf.BuildSparseVector(query, collection);
+                return s;
+            }
+            log("S3-SPARSE", $"Query[{qi}] sparse builders ready");
 
-            var results = await qdrant.SearchAllCollectionsAsync(embedding, sparse, perQueryLimit);
+            var results = await qdrant.SearchAllCollectionsAsync(embedding, SparseBuilder, perQueryLimit);
             var byColl = results.GroupBy(r => r.Collection ?? "?").ToDictionary(g => g.Key, g => g.Count());
             log("S4-SEARCH", $"Query[{qi}] → {results.Count} results: {string.Join(", ", byColl.Select(kv => $"{kv.Key}:{kv.Value}"))}");
             for (int i = 0; i < results.Count; i++)

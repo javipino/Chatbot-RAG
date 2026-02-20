@@ -12,9 +12,15 @@
     <PackageReference Include="Azure.Identity" Version="1.16.0" />
   </ItemGroup>
 
-  <!-- Copy TF-IDF vocabulary to output with correct relative path -->
+  <!-- Copy TF-IDF vocabularies to output with correct relative path -->
   <ItemGroup>
     <None Update="Data\tfidf_vocabulary.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Data\tfidf_vocabulary_sentencias.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="Data\tfidf_vocabulary_criterios.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>

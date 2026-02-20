@@ -55,9 +55,9 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
         return (result?.Result?.Points ?? []).Select(p => PointToChunk(p, collectionName)).ToList();
     }
 
-    /// <summary>Cross-collection hybrid search with weighted merge.</summary>
+    /// <summary>Cross-collection hybrid search with weighted merge. Uses per-collection sparse vectors.</summary>
     public async Task<List<ChunkResult>> SearchAllCollectionsAsync(
-        float[] denseVector, QdrantSparseQuery? sparseVector, int finalLimit = 10)
+        float[] denseVector, Func<string, QdrantSparseQuery?> sparseBuilder, int finalLimit = 10)
     {
         int perColTopK = Math.Max(5, Math.Min(10, finalLimit));
 
@@ -65,6 +65,7 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
         {
             try
             {
+                var sparseVector = sparseBuilder(col.Name);
                 var results = await SearchCollectionAsync(col.Name, denseVector, sparseVector, perColTopK);
                 foreach (var r in results)
                 {

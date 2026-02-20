@@ -12,6 +12,7 @@ public static class ToolDefinitions
     [
         SearchNormativa,
         SearchSentencias,
+        SearchCriterios,
         GetArticle,
         GetRelatedChunks,
     ];
@@ -48,6 +49,27 @@ public static class ToolDefinitions
             properties = new
             {
                 query = new { type = "string", description = "Case law search keywords (in Spanish)" },
+                top_k = new { type = "integer", description = "Number of results (default 5, max 10)", @default = 5 },
+            },
+            required = new[] { "query" }
+        }));
+
+    public static FunctionToolDefinition SearchCriterios { get; } = new(
+        name: "search_criterios",
+        description: """
+            Search the INSS management criteria collection (Criterios de Gestión del INSS).
+            These are official interpretive criteria from the National Social Security Institute
+            on how to apply Social Security regulations in practice.
+            Use it for questions about benefits calculation, eligibility, administrative procedures,
+            or when you need the INSS's official position on how to interpret a regulation.
+            Example: "jubilación anticipada coeficientes reductores bomberos", "incapacidad permanente total subsidio desempleo".
+            """,
+        parameters: BinaryData.FromObjectAsJson(new
+        {
+            type = "object",
+            properties = new
+            {
+                query = new { type = "string", description = "Search keywords about INSS criteria (in Spanish)" },
                 top_k = new { type = "integer", description = "Number of results (default 5, max 10)", @default = 5 },
             },
             required = new[] { "query" }

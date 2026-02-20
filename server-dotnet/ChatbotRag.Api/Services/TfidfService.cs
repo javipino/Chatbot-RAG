@@ -10,35 +10,53 @@ namespace ChatbotRag.Api.Services;
 /// </summary>
 public class TfidfService
 {
-    private readonly TfidfVocabulary? _vocab;
+    private readonly Dictionary<string, TfidfVocabulary> _vocabs = new(StringComparer.OrdinalIgnoreCase);
+
+    // Map from collection name → vocabulary filename
+    private static readonly (string Collection, string Filename)[] VocabFiles =
+    [
+        ("normativa",     "tfidf_vocabulary.json"),
+        ("sentencias",    "tfidf_vocabulary_sentencias.json"),
+        ("criterios_inss","tfidf_vocabulary_criterios.json"),
+    ];
 
     public TfidfService(ILogger<TfidfService> logger)
     {
-        var candidates = new[]
+        foreach (var (collection, filename) in VocabFiles)
         {
-            Path.Combine(AppContext.BaseDirectory, "Data", "tfidf_vocabulary.json"),
-            Path.Combine(AppContext.BaseDirectory, "tfidf_vocabulary.json"),
-        };
-
-        foreach (var path in candidates)
-        {
-            if (File.Exists(path))
+            var candidates = new[]
             {
+                Path.Combine(AppContext.BaseDirectory, "Data", filename),
+                Path.Combine(AppContext.BaseDirectory, filename),
+            };
+
+            foreach (var path in candidates)
+            {
+                if (!File.Exists(path)) continue;
                 try
                 {
                     var json = File.ReadAllText(path);
-                    _vocab = JsonSerializer.Deserialize<TfidfVocabulary>(json, JsonOptions);
-                    logger.LogInformation("TF-IDF vocabulary loaded: {Terms} terms, {Docs} docs", _vocab?.Terms?.Count ?? 0, _vocab?.NumDocs ?? 0);
-                    return;
+                    var vocab = JsonSerializer.Deserialize<TfidfVocabulary>(json, JsonOptions);
+                    if (vocab?.Terms != null)
+                    {
+                        _vocabs[collection] = vocab;
+                        logger.LogInformation("TF-IDF [{Collection}] loaded: {Terms} terms, {Docs} docs",
+                            collection, vocab.Terms.Count, vocab.NumDocs);
+                    }
+                    break;
                 }
                 catch (Exception ex)
                 {
-                    logger.LogWarning("Failed to load vocabulary from {Path}: {Message}", path, ex.Message);
+                    logger.LogWarning("Failed to load vocabulary {File}: {Message}", filename, ex.Message);
                 }
             }
         }
 
-        logger.LogWarning("TF-IDF vocabulary not found. Sparse vectors will be null.");
+        if (_vocabs.Count == 0)
+            logger.LogWarning("No TF-IDF vocabularies found. Sparse vectors will be null.");
+        else
+            logger.LogInformation("TF-IDF loaded {Count} vocabularies: {Collections}",
+                _vocabs.Count, string.Join(", ", _vocabs.Keys));
     }
 
     // ── Spanish stopwords ──
@@ -120,10 +138,23 @@ public class TfidfService
         return tokens;
     }
 
-    /// <summary>Build BM25-style sparse vector from query text.</summary>
+    /// <summary>Build BM25-style sparse vector from query text using the specified collection vocabulary.</summary>
+    public QdrantSparseQuery? BuildSparseVector(string text, string collection)
+    {
+        if (!_vocabs.TryGetValue(collection, out var vocab)) return null;
+        return BuildSparseVectorInternal(text, vocab);
+    }
+
+    /// <summary>Build BM25-style sparse vector from query text (defaults to normativa vocabulary).</summary>
     public QdrantSparseQuery? BuildSparseVector(string text)
     {
-        if (_vocab == null) return null;
+        var vocab = _vocabs.GetValueOrDefault("normativa");
+        if (vocab == null) return null;
+        return BuildSparseVectorInternal(text, vocab);
+    }
+
+    private static QdrantSparseQuery? BuildSparseVectorInternal(string text, TfidfVocabulary _vocab)
+    {
 
         var tokens = Tokenize(text);
         if (tokens.Count == 0) return null;

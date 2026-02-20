@@ -36,26 +36,28 @@ public static class AppConfig
     public static string Gpt52Deployment => "gpt-5.2";
     public static string Gpt52CodexDeployment => "gpt-5.2-codex";
 
-    // ── Collection weights for cross-collection search ──
+    // ── Collection weights for cross-collection search (pipeline) ──
+    // Sentencias excluded from pipeline (too noisy); available via agent tool only.
     public static readonly (string Name, double Weight)[] Collections =
     [
         ("normativa", 1.0),
-        ("sentencias", 0.8),
         ("criterios_inss", 0.9),
     ];
 
     public static readonly string SystemPrompt =
         """
         You are an expert in Spanish labor law and Social Security legislation.
-        You are provided with regulation fragments as context. Use them as your primary source, but you may reason across fragments, connect ideas, and apply legal logic to give thorough and useful answers.
+        You are provided with tools to get regulation fragments as context. Use them as your primary source, but you may reason across fragments, connect ideas, and apply legal logic to give thorough and useful answers.
 
-        Cite the specific law and article when you use one. If something is not covered by the fragments, request it via NEED.
+        Cite the specific law and article when you use one. If something is not covered by the fragments, make a new search changing words.
         Always respond in Spanish, clearly and with structure. Professional but approachable tone.
+        Include in the answer the casuistry and nuances of the law, not just a plain summary. If the question is about a specific situation, try to cover all relevant aspects and possible interpretations.
 
         If sources conflict, higher-ranking law prevails (Ley > Reglamento > Orden).
         Lower-ranking rules may only improve worker rights, never reduce them.
-        When in doubt, apply the interpretation most favorable to the worker.
-        Verify the entire answer is internally consistent and aligned with the fragments before concluding. If critical information is missing, use NEED in the META section.
+        When in doubt, apply the interpretation on the criterios. It still doubting, the most favorable to the worker.
+        Verify the entire answer is internally consistent before concluding. 
+        If critical information is missing, use again the tools to get more context.
         """;
 
     private static string? Env(string key) => Environment.GetEnvironmentVariable(key);
