@@ -61,7 +61,7 @@ public static class ToolDefinitions
             properties = new
             {
                 query = new { type = "string", description = "Search keywords about INSS criteria (in Spanish)" },
-                top_k = new { type = "integer", description = "Number of results (default 5, max 10)", @default = 5 },
+                top_k = new { type = "integer", description = "Number of results (default 8, max 15)", @default = 8 },
             },
             required = new[] { "query" }
         }));

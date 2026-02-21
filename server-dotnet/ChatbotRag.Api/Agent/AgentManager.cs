@@ -157,7 +157,7 @@ public class AgentManager : IAsyncDisposable
 
         ### Search Strategy (priority order)
         1. **search_normativa** — Primary source. Search legislation by keywords (3-6 technical-legal terms in Spanish).
-        2. **search_criterios** — Very important. Search INSS management criteria: official interpretations on how to apply regulations in practice (benefits calculation, eligibility, administrative procedures) (3-6 technical-legal terms in Spanish).
+        2. **search_criterios** — Very important. Search INSS management criteria: official interpretations on how to apply regulations in practice (search with 3-6 technical-legal terms in Spanish). You can use the law and article to searh here too.
         3. **get_article** — When you know the exact article number and law name.
         4. **get_related_chunks** — To expand cross-references from a chunk you've already found.
         5. If the question involves multiple concepts, make separate searches, one per concept.
