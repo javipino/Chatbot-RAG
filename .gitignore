@@ -40,6 +40,10 @@ data/
 *.pdf
 !server/data/
 !server/data/tfidf_vocabulary.json
+!server-dotnet/ChatbotRag.Api/Data/
+!server-dotnet/ChatbotRag.Api/Data/tfidf_vocabulary.json
+!server-dotnet/ChatbotRag.Api/Data/tfidf_vocabulary_criterios.json
+!server-dotnet/ChatbotRag.Api/Data/tfidf_vocabulary_sentencias.json
 
 # Temporary files
 *.tmp

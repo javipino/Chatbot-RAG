@@ -297,6 +297,7 @@ dotnet publish server-dotnet/ChatbotRag.Api/ChatbotRag.Api.csproj -c Release -o 
 - **Sin derechos de admin**
 - **GitHub:** repo `javipino/Chatbot-RAG` (público), cuenta `javipino`
 - **Git remote:** `https://javipino@github.com/javipino/Chatbot-RAG.git`
+- **Scripting preferido:** Node.js (no usar Python para scripts ad-hoc o consultas; usar siempre Node.js)
 
 ---
 
