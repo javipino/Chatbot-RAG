@@ -44,6 +44,9 @@ if (hasFoundry)
     builder.Services.AddScoped<ToolExecutor>();
 }
 
+// ── Keep-alive self-ping (prevents F1 cold starts, 8:00–00:00 CET) ──
+builder.Services.AddHostedService<ChatbotRag.Api.Services.KeepAliveService>();
+
 var app = builder.Build();
 
 // ── Static files + SPA fallback ──
@@ -72,6 +75,7 @@ else
 }
 
 // ── API endpoints ──
+app.MapGet("/health", () => Results.Ok(new { status = "ok", ts = DateTime.UtcNow }));
 app.MapChat();
 app.MapRagPipeline();
 if (hasFoundry) app.MapRagAgent();
