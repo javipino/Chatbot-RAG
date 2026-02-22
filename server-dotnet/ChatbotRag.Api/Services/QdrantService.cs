@@ -263,7 +263,7 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
     private static void ApplyRecencyBoost(List<ChunkResult> chunks)
     {
         const int baseYear = 2015;
-        const double boostPerYear = 0.05;
+        const double boostPerYear = 0.03;
 
         foreach (var c in chunks)
         {

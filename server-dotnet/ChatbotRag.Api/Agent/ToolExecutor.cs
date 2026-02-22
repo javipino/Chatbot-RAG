@@ -69,7 +69,7 @@ public class ToolExecutor(
     private async Task<string> SearchCriteriosAsync(System.Text.Json.JsonElement args)
     {
         var query = args.GetProperty("query").GetString() ?? "";
-        var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 12;
+        var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 8;
 
         var embedding = await openAi.EmbedAsync(query);
         var sparse = tfidf.BuildSparseVector(query, "criterios_inss");
@@ -114,27 +114,31 @@ public class ToolExecutor(
 
     private static object ChunkToToolResult(ChunkResult r)
     {
+        var isCriterio = !string.IsNullOrEmpty(r.CriterioNum);
+
         var result = new Dictionary<string, object?>
         {
             ["id"] = r.Id,
             ["law"] = r.Law,
             ["section"] = r.Section,
-            ["chapter"] = r.Chapter,
             ["resumen"] = r.Resumen,
             ["text"] = r.Text,
             ["score"] = r.WeightedScore > 0 ? r.WeightedScore : r.Score,
             ["collection"] = r.Collection,
         };
 
-        // Add criterio-specific fields when present
-        if (!string.IsNullOrEmpty(r.CriterioNum))
+        if (isCriterio)
+        {
+            // Criterio-specific: criterio_num, fecha (skip chapter — it duplicates fecha)
             result["criterio_num"] = r.CriterioNum;
-        if (!string.IsNullOrEmpty(r.Titulo))
-            result["titulo"] = r.Titulo;
-        if (!string.IsNullOrEmpty(r.Fecha))
-            result["fecha"] = r.Fecha;
-        if (r.PalabrasClave is { Count: > 0 })
-            result["palabras_clave"] = r.PalabrasClave;
+            if (!string.IsNullOrEmpty(r.Fecha))
+                result["fecha"] = r.Fecha;
+        }
+        else
+        {
+            // Normativa/sentencias: chapter is meaningful
+            result["chapter"] = r.Chapter;
+        }
 
         return result;
     }

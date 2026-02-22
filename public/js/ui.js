@@ -270,6 +270,7 @@ export const UI = {
         }
         const labels = {
             search_normativa: '🔍 Buscando en normativa...',
+            search_criterios: '🔍 Buscando en criterios...',
             search_sentencias: '⚖️ Buscando en sentencias...',
             get_article: '📄 Recuperando artículo...',
             get_related_chunks: '🔗 Buscando chunks relacionados...',
