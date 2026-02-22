@@ -24,9 +24,10 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
     public async Task<List<ChunkResult>> SearchCollectionAsync(
         string collectionName, float[] denseVector, QdrantSparseQuery? sparseVector, int topK = 10)
     {
+        var prefetchLimit = Math.Max(20, topK + 10); // Ensure enough candidates for RRF fusion
         var prefetch = new List<QdrantPrefetch>
         {
-            new() { Query = denseVector, Using = "text-dense", Limit = 20 },
+            new() { Query = denseVector, Using = "text-dense", Limit = prefetchLimit },
         };
 
         if (sparseVector != null)
@@ -35,7 +36,7 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
             {
                 Query = sparseVector,
                 Using = "text-sparse",
-                Limit = 20,
+                Limit = prefetchLimit,
             });
         }
 

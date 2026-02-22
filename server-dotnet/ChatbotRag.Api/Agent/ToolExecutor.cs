@@ -70,11 +70,11 @@ public class ToolExecutor(
     private async Task<string> SearchCriteriosAsync(System.Text.Json.JsonElement args)
     {
         var query = args.GetProperty("query").GetString() ?? "";
-        var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 20;
+        const int topK = 20; // Fixed: browse always returns 20 lightweight summaries
 
         var embedding = await openAi.EmbedAsync(query);
         var sparse = tfidf.BuildSparseVector(query, "criterios_inss");
-        var results = await qdrant.SearchCollectionAsync("criterios_inss", embedding, sparse, Math.Clamp(topK, 1, 25));
+        var results = await qdrant.SearchCollectionAsync("criterios_inss", embedding, sparse, topK);
 
         logger.LogInformation("[AGENT] search_criterios({Query}) → {Count} chunks (metadata-only)", query, results.Count);
         return System.Text.Json.JsonSerializer.Serialize(results.Select(CriterioToSummary));
