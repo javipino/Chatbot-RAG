@@ -48,9 +48,9 @@ public static class ToolDefinitions
     public static FunctionToolDefinition SearchCriterios { get; } = new(
         name: "search_criterios",
         description: """
-            Search the INSS management criteria collection (Criterios de Gestión del INSS).
-            These are official interpretive criteria from the National Social Security Institute
-            on how to apply Social Security regulations in practice.
+            Browse the INSS management criteria collection (Criterios de Gestión del INSS).
+            Returns a LIGHTWEIGHT SUMMARY of each result (id, criterio_num, fecha, descripcion, score) — NO full text.
+            After reviewing the summaries, use get_criterios with the IDs of the relevant ones to fetch their full text.
             Use it for questions about benefits calculation, eligibility, administrative procedures,
             or when you need the INSS's official position on how to interpret a regulation.
             Example: "jubilación anticipada coeficientes reductores bomberos", "incapacidad permanente total subsidio desempleo".
@@ -61,9 +61,26 @@ public static class ToolDefinitions
             properties = new
             {
                 query = new { type = "string", description = "Search keywords about INSS criteria (in Spanish)" },
-                top_k = new { type = "integer", description = "Number of results (default 8, max 15)", @default = 8 },
+                top_k = new { type = "integer", description = "Number of results (default 20, max 25)", @default = 20 },
             },
             required = new[] { "query" }
+        }));
+
+    public static FunctionToolDefinition GetCriterios { get; } = new(
+        name: "get_criterios",
+        description: """
+            Fetch the FULL TEXT of specific INSS criteria by their IDs.
+            Use this after search_criterios to retrieve complete content for the criteria you identified as relevant.
+            You can request as many IDs as you need — if all 20 results from search_criterios look relevant, request all 20.
+            """,
+        parameters: BinaryData.FromObjectAsJson(new
+        {
+            type = "object",
+            properties = new
+            {
+                ids = new { type = "array", items = new { type = "integer" }, description = "Array of chunk IDs from search_criterios results" },
+            },
+            required = new[] { "ids" }
         }));
 
     public static FunctionToolDefinition GetArticle { get; } = new(
@@ -108,6 +125,7 @@ public static class ToolDefinitions
         SearchNormativa,
         SearchSentencias,
         SearchCriterios,
+        GetCriterios,
         GetArticle,
         GetRelatedChunks,
     ];

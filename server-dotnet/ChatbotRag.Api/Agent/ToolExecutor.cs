@@ -28,6 +28,7 @@ public class ToolExecutor(
                 "search_normativa" => await SearchNormativaAsync(args),
                 "search_sentencias" => await SearchSentenciasAsync(args),
                 "search_criterios" => await SearchCriteriosAsync(args),
+                "get_criterios" => await GetCriteriosAsync(args),
                 "get_article" => await GetArticleAsync(args),
                 "get_related_chunks" => await GetRelatedChunksAsync(args),
                 _ => $"{{\"error\": \"Unknown tool: {toolName}\"}}"
@@ -69,14 +70,31 @@ public class ToolExecutor(
     private async Task<string> SearchCriteriosAsync(System.Text.Json.JsonElement args)
     {
         var query = args.GetProperty("query").GetString() ?? "";
-        var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 8;
+        var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 20;
 
         var embedding = await openAi.EmbedAsync(query);
         var sparse = tfidf.BuildSparseVector(query, "criterios_inss");
-        var results = await qdrant.SearchCollectionAsync("criterios_inss", embedding, sparse, Math.Clamp(topK, 1, 15));
+        var results = await qdrant.SearchCollectionAsync("criterios_inss", embedding, sparse, Math.Clamp(topK, 1, 25));
 
-        logger.LogInformation("[AGENT] search_criterios({Query}) → {Count} chunks", query, results.Count);
-        return System.Text.Json.JsonSerializer.Serialize(results.Select(ChunkToToolResult));
+        logger.LogInformation("[AGENT] search_criterios({Query}) → {Count} chunks (metadata-only)", query, results.Count);
+        return System.Text.Json.JsonSerializer.Serialize(results.Select(CriterioToSummary));
+    }
+
+    private async Task<string> GetCriteriosAsync(System.Text.Json.JsonElement args)
+    {
+        var idsElem = args.GetProperty("ids");
+        var ids = new List<object>();
+        foreach (var el in idsElem.EnumerateArray())
+        {
+            if (el.ValueKind == System.Text.Json.JsonValueKind.Number)
+                ids.Add(el.GetInt64());
+            else if (long.TryParse(el.GetString(), out var parsed))
+                ids.Add(parsed);
+        }
+
+        var chunks = await qdrant.FetchChunksByIdsAsync(ids, "criterios_inss");
+        logger.LogInformation("[AGENT] get_criterios({Count} ids) → {Found} chunks", ids.Count, chunks.Count);
+        return System.Text.Json.JsonSerializer.Serialize(chunks.Select(ChunkToToolResult));
     }
 
     private async Task<string> GetArticleAsync(System.Text.Json.JsonElement args)
@@ -111,6 +129,16 @@ public class ToolExecutor(
         logger.LogInformation("[AGENT] get_related_chunks({Id}) → {Count} chunks", chunkId, related.Count);
         return System.Text.Json.JsonSerializer.Serialize(related.Select(ChunkToToolResult));
     }
+
+    /// <summary>Lightweight summary for browse step — no full text.</summary>
+    private static object CriterioToSummary(ChunkResult r) => new Dictionary<string, object?>
+    {
+        ["id"] = r.Id,
+        ["criterio_num"] = r.CriterioNum,
+        ["fecha"] = r.Fecha,
+        ["descripcion"] = r.Resumen,
+        ["score"] = r.WeightedScore > 0 ? r.WeightedScore : r.Score,
+    };
 
     private static object ChunkToToolResult(ChunkResult r)
     {

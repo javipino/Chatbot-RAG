@@ -96,8 +96,8 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
         return all.Take(finalLimit).ToList();
     }
 
-    /// <summary>Fetch chunks by point IDs from normativa collection.</summary>
-    public async Task<List<ChunkResult>> FetchChunksByIdsAsync(IEnumerable<object> ids)
+    /// <summary>Fetch chunks by point IDs from a given collection (defaults to normativa).</summary>
+    public async Task<List<ChunkResult>> FetchChunksByIdsAsync(IEnumerable<object> ids, string collectionName = "normativa")
     {
         // Normalize IDs to long — Qdrant requires integer point IDs, not strings or JsonElement
         var idList = ids
@@ -120,13 +120,13 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
 
         var body = new QdrantFetchRequest { Ids = idList, WithPayload = true, WithVector = false };
         var client = CreateClient();
-        var response = await client.PostAsJsonAsync("/collections/normativa/points", body);
+        var response = await client.PostAsJsonAsync($"/collections/{collectionName}/points", body);
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<QdrantFetchResponse>();
         return (result?.Result ?? []).Select(p =>
         {
-            var chunk = PointToChunk(p, "normativa");
+            var chunk = PointToChunk(p, collectionName);
             chunk.Score = 0.5;
             chunk.WeightedScore = 0.5;
             chunk.Chased = true;
