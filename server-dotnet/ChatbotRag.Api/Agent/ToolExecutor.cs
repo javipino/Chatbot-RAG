@@ -69,11 +69,11 @@ public class ToolExecutor(
     private async Task<string> SearchCriteriosAsync(System.Text.Json.JsonElement args)
     {
         var query = args.GetProperty("query").GetString() ?? "";
-        var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 8;
+        var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 12;
 
         var embedding = await openAi.EmbedAsync(query);
         var sparse = tfidf.BuildSparseVector(query, "criterios_inss");
-        var results = await qdrant.SearchCollectionAsync("criterios_inss", embedding, sparse, Math.Clamp(topK, 1, 10));
+        var results = await qdrant.SearchCollectionAsync("criterios_inss", embedding, sparse, Math.Clamp(topK, 1, 15));
 
         logger.LogInformation("[AGENT] search_criterios({Query}) → {Count} chunks", query, results.Count);
         return System.Text.Json.JsonSerializer.Serialize(results.Select(ChunkToToolResult));
@@ -112,15 +112,30 @@ public class ToolExecutor(
         return System.Text.Json.JsonSerializer.Serialize(related.Select(ChunkToToolResult));
     }
 
-    private static object ChunkToToolResult(ChunkResult r) => new
+    private static object ChunkToToolResult(ChunkResult r)
     {
-        id = r.Id,
-        law = r.Law,
-        section = r.Section,
-        chapter = r.Chapter,
-        resumen = r.Resumen,
-        text = r.Text,
-        score = r.WeightedScore > 0 ? r.WeightedScore : r.Score,
-        collection = r.Collection,
-    };
+        var result = new Dictionary<string, object?>
+        {
+            ["id"] = r.Id,
+            ["law"] = r.Law,
+            ["section"] = r.Section,
+            ["chapter"] = r.Chapter,
+            ["resumen"] = r.Resumen,
+            ["text"] = r.Text,
+            ["score"] = r.WeightedScore > 0 ? r.WeightedScore : r.Score,
+            ["collection"] = r.Collection,
+        };
+
+        // Add criterio-specific fields when present
+        if (!string.IsNullOrEmpty(r.CriterioNum))
+            result["criterio_num"] = r.CriterioNum;
+        if (!string.IsNullOrEmpty(r.Titulo))
+            result["titulo"] = r.Titulo;
+        if (!string.IsNullOrEmpty(r.Fecha))
+            result["fecha"] = r.Fecha;
+        if (r.PalabrasClave is { Count: > 0 })
+            result["palabras_clave"] = r.PalabrasClave;
+
+        return result;
+    }
 }

@@ -52,7 +52,13 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
         response.EnsureSuccessStatusCode();
 
         var result = await response.Content.ReadFromJsonAsync<QdrantQueryResponse>();
-        return (result?.Result?.Points ?? []).Select(p => PointToChunk(p, collectionName)).ToList();
+        var chunks = (result?.Result?.Points ?? []).Select(p => PointToChunk(p, collectionName)).ToList();
+
+        // Apply recency boost for criterios_inss collection
+        if (collectionName == "criterios_inss")
+            ApplyRecencyBoost(chunks);
+
+        return chunks;
     }
 
     /// <summary>Cross-collection hybrid search with weighted merge. Uses per-collection sparse vectors.</summary>
@@ -250,6 +256,30 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
 
     // ── Private helpers ──
 
+    /// <summary>
+    /// Apply recency boost to criterios: score × (1 + 0.05 × max(0, year − 2015)).
+    /// Newer criterios get up to +50% boost (2025 → ×1.50).
+    /// </summary>
+    private static void ApplyRecencyBoost(List<ChunkResult> chunks)
+    {
+        const int baseYear = 2015;
+        const double boostPerYear = 0.05;
+
+        foreach (var c in chunks)
+        {
+            if (string.IsNullOrEmpty(c.Fecha)) continue;
+
+            // Fecha format: DD/MM/YYYY — extract year
+            var match = System.Text.RegularExpressions.Regex.Match(c.Fecha, @"(\d{4})");
+            if (!match.Success || !int.TryParse(match.Groups[1].Value, out var year)) continue;
+
+            var yearsAboveBase = Math.Max(0, year - baseYear);
+            var boost = 1.0 + boostPerYear * yearsAboveBase;
+            c.Score *= boost;
+            c.WeightedScore *= boost;
+        }
+    }
+
     private static ChunkResult PointToChunk(QdrantPoint p, string collection) => new()
     {
         Id = p.Id,
@@ -262,6 +292,11 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
         Text = p.Payload?.Text,
         Resumen = p.Payload?.Resumen,
         Refs = p.Payload?.Refs,
+        // Criterio-specific
+        Fecha = p.Payload?.Fecha,
+        CriterioNum = p.Payload?.CriterioNum,
+        Titulo = p.Payload?.Titulo,
+        PalabrasClave = p.Payload?.PalabrasClave,
     };
 
     /// <summary>Strip "Texto refundido de la Ley del?" prefix, keep first 2 words &gt;3 chars.</summary>

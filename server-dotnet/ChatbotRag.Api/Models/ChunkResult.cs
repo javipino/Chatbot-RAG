@@ -21,4 +21,10 @@ public class ChunkResult
     public bool Carryover { get; set; }
     public bool Chased { get; set; }
     public string? RefReason { get; set; }
+
+    // ── Criterio-specific metadata ──
+    public string? Fecha { get; set; }
+    public string? CriterioNum { get; set; }
+    public string? Titulo { get; set; }
+    public List<string>? PalabrasClave { get; set; }
 }

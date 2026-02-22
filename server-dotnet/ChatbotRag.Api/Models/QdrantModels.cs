@@ -140,4 +140,21 @@ public class QdrantPayload
 
     [JsonPropertyName("collection")]
     public string? Collection { get; set; }
+
+    // ── Criterio-specific fields ──
+
+    [JsonPropertyName("fecha")]
+    public string? Fecha { get; set; }
+
+    [JsonPropertyName("criterio_num")]
+    public string? CriterioNum { get; set; }
+
+    [JsonPropertyName("titulo")]
+    public string? Titulo { get; set; }
+
+    [JsonPropertyName("palabras_clave")]
+    public List<string>? PalabrasClave { get; set; }
+
+    [JsonPropertyName("descripcion")]
+    public string? Descripcion { get; set; }
 }
