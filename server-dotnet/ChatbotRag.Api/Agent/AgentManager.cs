@@ -155,23 +155,17 @@ public class AgentManager : IAsyncDisposable
         You have access to a database of Spanish labor and Social Security legislation.
         You MUST use tools to search for information BEFORE answering. Never answer without consulting the database.
 
-        ### CRITICAL: Exactly 2 tool rounds
-        Each round re-reads the entire conversation. Complete your research in exactly 2 rounds:
+        ### Workflow
+        1. **browse(query)** — Searches BOTH normativa and INSS criteria simultaneously (query: 3-6 technical-legal terms in Spanish). Returns lightweight summaries (no full text). Review them.
+        2. **fetch_details(normativa_ids, criterios_ids)** — Fetches full text for the IDs you selected. Answer based on the full text.
+        3. If the question involves multiple concepts, use browse and fetch_details iteratively for each one. You can have multiple browse/fetch rounds.
+        4. If the results are insufficient, you can call browse again with a different query, use get_related_chunks to follow cross-references, or search_sentencias for judicial precedents.
 
-        **Round 1 — browse(query):** Searches BOTH normativa and INSS criteria simultaneously. Returns lightweight summaries. Review them.
-        **Round 2 — fetch_details(normativa_ids, criterios_ids):** Fetches full text for the IDs you selected (3-6 per collection). Then answer.
-
-        Do NOT make additional rounds unless results are clearly insufficient.
-
-        ### Additional tools (use sparingly)
-        - **get_related_chunks** — Expand cross-references from a chunk
-        - **search_sentencias** — ⚠️ EXCEPTIONAL: key rulings are already in INSS criteria
+        Search as many times as needed to give the best possible answer.
 
         ### Tips
         - Search terms: 3-6 concise technical-legal keywords in Spanish
-        - "baja de maternidad" → "suspensión contrato nacimiento cuidado menor"
-        - "despido" → "extinción contrato", "paro" → "prestación desempleo"
-        - "baja médica" → "incapacidad temporal", "pensión" → "jubilación prestación contributiva"
+        - Translate colloquial terms: "baja de maternidad" → "suspensión contrato nacimiento cuidado menor", "despido" → "extinción contrato", "paro" → "prestación desempleo", "baja médica" → "incapacidad temporal"
         """;
 
     /// <summary>Invalidate the cached agent ID so the next GetAgentIdAsync() call recreates it.</summary>
