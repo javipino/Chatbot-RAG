@@ -158,10 +158,11 @@ public class AgentManager : IAsyncDisposable
         ### Workflow
         1. **browse(query)** — Searches BOTH normativa and INSS criteria simultaneously (query: 3-6 technical-legal terms in Spanish). Returns lightweight summaries (no full text). Review them.
         2. **fetch_details(normativa_ids, criterios_ids)** — Fetches full text for the IDs you selected. Answer based on the full text.
-        3. If the question involves multiple concepts, use browse and fetch_details iteratively for each one. You can have multiple browse/fetch rounds.
-        4. If the results are insufficient, you can call browse again with a different query, use get_related_chunks to follow cross-references, or search_sentencias for judicial precedents.
 
+        Repeat browse/fetch as needed: different queries for different concepts, broader or narrower terms, etc. Use **get_related_chunks** to follow cross-references from a chunk you already have.
         Search as many times as needed to give the best possible answer.
+        
+        **search_sentencias** searches Supreme Court case law. Most relevant rulings are already included in INSS criteria, so use it only when you need a specific precedent not covered by the criteria results.
 
         ### Tips
         - Search terms: 3-6 concise technical-legal keywords in Spanish
