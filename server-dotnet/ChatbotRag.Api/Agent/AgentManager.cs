@@ -32,7 +32,7 @@ public class AgentManager : IAsyncDisposable
 {
     private readonly PersistentAgentsClient _agentsClient;
     private string? _agentId;
-    private readonly string? _configuredAgentId;
+    private string? _configuredAgentId;
     private readonly SemaphoreSlim _initLock = new(1, 1);
     private readonly ILogger<AgentManager> _logger;
     private readonly AiFoundryCredential _credential;
@@ -196,8 +196,10 @@ public class AgentManager : IAsyncDisposable
     /// <summary>Invalidate the cached agent ID so the next GetAgentIdAsync() call recreates it.</summary>
     public void InvalidateAgent()
     {
+        _logger.LogWarning("Agent ID invalidated (was configured={Configured}, cached={Cached}) — will recreate on next request",
+            _configuredAgentId, _agentId);
+        _configuredAgentId = null;
         _agentId = null;
-        _logger.LogWarning("Agent ID invalidated — will recreate on next request");
     }
 
     /// <summary>Create a new thread for a conversation.</summary>
