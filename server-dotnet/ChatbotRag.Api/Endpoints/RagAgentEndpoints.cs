@@ -43,12 +43,29 @@ public static class RagAgentEndpoints
                 agentManager.InvalidateAgent();
                 try
                 {
+                    req.ThreadId = null;
                     await RunAgentAsync(ctx, req, agentManager, toolExecutor, logger);
                 }
                 catch (Exception retryEx)
                 {
                     logger.LogError(retryEx, "RAG Agent error (retry)");
                     await SseHelper.WriteErrorAsync(ctx.Response, $"{retryEx.GetType().Name}: {retryEx.Message}\n{retryEx.StackTrace}");
+                }
+            }
+            catch (Exception ex) when (ex.Message.StartsWith("THREAD_RETRY:", StringComparison.Ordinal))
+            {
+                // Run failed on a resumed thread (e.g. thread was created by a different/deleted agent)
+                var reason = ex.Message["THREAD_RETRY:".Length..];
+                logger.LogWarning("[AGENT] Thread-level failure ({Reason}) — retrying with fresh thread", reason);
+                try
+                {
+                    req.ThreadId = null;
+                    await RunAgentAsync(ctx, req, agentManager, toolExecutor, logger);
+                }
+                catch (Exception retryEx)
+                {
+                    logger.LogError(retryEx, "RAG Agent error (thread retry)");
+                    await SseHelper.WriteErrorAsync(ctx.Response, $"{retryEx.GetType().Name}: {retryEx.Message}");
                 }
             }
             catch (Exception ex)
@@ -152,8 +169,12 @@ public static class RagAgentEndpoints
                         break;
 
                     case RunUpdate runUpdate when update.UpdateKind == StreamingUpdateReason.RunFailed:
-                        logger.LogError("[AGENT] Run failed: {Error}", runUpdate.Value.LastError?.Message);
-                        await SseHelper.WriteErrorAsync(ctx.Response, runUpdate.Value.LastError?.Message ?? "Run failed");
+                        var errorMsg = runUpdate.Value.LastError?.Message ?? "Run failed";
+                        logger.LogError("[AGENT] Run failed: {Error} (resumed={Resumed})", errorMsg, !string.IsNullOrEmpty(req.ThreadId));
+                        // If we were resuming a thread and the run failed, signal to retry with a fresh thread
+                        if (!string.IsNullOrEmpty(req.ThreadId))
+                            throw new InvalidOperationException($"THREAD_RETRY:{errorMsg}");
+                        await SseHelper.WriteErrorAsync(ctx.Response, errorMsg);
                         return;
 
                     case RunUpdate runUpdate when update.UpdateKind == StreamingUpdateReason.RunCompleted:
