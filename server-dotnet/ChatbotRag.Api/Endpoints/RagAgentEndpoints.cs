@@ -105,6 +105,10 @@ public static class RagAgentEndpoints
         {
             thread = await agentsClient.Threads.GetThreadAsync(req.ThreadId);
             logger.LogInformation("[AGENT] Resuming thread {Id}", thread.Id);
+
+            // Cancel any active runs before creating a new one
+            // (the Assistants API doesn't allow concurrent runs on the same thread)
+            await CancelActiveRunsAsync(agentsClient, thread.Id, logger);
         }
         else
         {
@@ -226,5 +230,39 @@ public static class RagAgentEndpoints
             threadId = thread.Id,
             sources,
         });
+    }
+
+    /// <summary>
+    /// Cancel any in_progress or requires_action runs on a thread.
+    /// The Assistants API doesn't allow creating a new run while one is active.
+    /// </summary>
+    private static async Task CancelActiveRunsAsync(PersistentAgentsClient client, string threadId, ILogger logger)
+    {
+        try
+        {
+            await foreach (var run in client.Runs.GetRunsAsync(threadId))
+            {
+                var status = run.Status.ToString();
+                if (status is "InProgress" or "Queued" or "RequiresAction" or "in_progress" or "queued" or "requires_action")
+                {
+                    logger.LogWarning("[AGENT] Cancelling active run {RunId} (status={Status}) on thread {ThreadId}",
+                        run.Id, status, threadId);
+                    try
+                    {
+                        await client.Runs.CancelRunAsync(threadId, run.Id);
+                        // Wait a bit for cancellation to propagate
+                        await Task.Delay(500);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogWarning("[AGENT] Failed to cancel run {RunId}: {Msg}", run.Id, ex.Message);
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("[AGENT] Failed to list runs for thread {ThreadId}: {Msg}", threadId, ex.Message);
+        }
     }
 }
