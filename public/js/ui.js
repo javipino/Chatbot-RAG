@@ -269,11 +269,9 @@ export const UI = {
             msgDiv.insertBefore(indicator, msgDiv.firstChild);
         }
         const labels = {
-            search_normativa: '🔍 Buscando en normativa...',
-            search_criterios: '🔍 Buscando en criterios...',
-            get_criterios: '📋 Recuperando criterios...',
+            browse: '🔍 Buscando en normativa y criterios...',
+            fetch_details: '📋 Recuperando textos completos...',
             search_sentencias: '⚖️ Buscando en sentencias...',
-            get_article: '📄 Recuperando artículo...',
             get_related_chunks: '🔗 Buscando chunks relacionados...',
         };
         indicator.textContent = labels[toolName] || `🔍 ${toolName}...`;

@@ -25,11 +25,9 @@ public class ToolExecutor(
 
             return toolName switch
             {
-                "search_normativa" => await SearchNormativaAsync(args),
+                "browse" => await BrowseAsync(args),
+                "fetch_details" => await FetchDetailsAsync(args),
                 "search_sentencias" => await SearchSentenciasAsync(args),
-                "search_criterios" => await SearchCriteriosAsync(args),
-                "get_criterios" => await GetCriteriosAsync(args),
-                "get_article" => await GetArticleAsync(args),
                 "get_related_chunks" => await GetRelatedChunksAsync(args),
                 _ => $"{{\"error\": \"Unknown tool: {toolName}\"}}"
             };
@@ -41,17 +39,66 @@ public class ToolExecutor(
         }
     }
 
-    private async Task<string> SearchNormativaAsync(System.Text.Json.JsonElement args)
+    /// <summary>
+    /// Combined browse: searches normativa + criterios_inss in parallel with a single embedding.
+    /// Returns lightweight summaries from both collections.
+    /// </summary>
+    private async Task<string> BrowseAsync(System.Text.Json.JsonElement args)
     {
         var query = args.GetProperty("query").GetString() ?? "";
-        var topK = args.TryGetProperty("top_k", out var tk) ? tk.GetInt32() : 8;
 
+        // One embedding call, two sparse vectors (collection-specific vocabularies)
         var embedding = await openAi.EmbedAsync(query);
-        var sparse = tfidf.BuildSparseVector(query, "normativa");
-        var results = await qdrant.SearchCollectionAsync("normativa", embedding, sparse, Math.Clamp(topK, 1, 15));
+        var sparseNormativa = tfidf.BuildSparseVector(query, "normativa");
+        var sparseCriterios = tfidf.BuildSparseVector(query, "criterios_inss");
 
-        logger.LogInformation("[AGENT] search_normativa({Query}) → {Count} chunks", query, results.Count);
-        return System.Text.Json.JsonSerializer.Serialize(results.Select(ChunkToToolResult));
+        // Parallel search across both collections
+        var normativaTask = qdrant.SearchCollectionAsync("normativa", embedding, sparseNormativa, 10);
+        var criteriosTask = qdrant.SearchCollectionAsync("criterios_inss", embedding, sparseCriterios, 15);
+
+        await Task.WhenAll(normativaTask, criteriosTask);
+
+        var normativaResults = normativaTask.Result;
+        var criteriosResults = criteriosTask.Result;
+
+        logger.LogInformation("[AGENT] browse({Query}) → normativa:{NCount}, criterios:{CCount}",
+            query, normativaResults.Count, criteriosResults.Count);
+
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            normativa = normativaResults.Select(NormativaToSummary),
+            criterios = criteriosResults.Select(CriterioToSummary),
+        });
+    }
+
+    /// <summary>
+    /// Combined fetch: retrieves full text from normativa + criterios_inss in parallel.
+    /// </summary>
+    private async Task<string> FetchDetailsAsync(System.Text.Json.JsonElement args)
+    {
+        var normativaIds = ParseIds(args, "normativa_ids");
+        var criteriosIds = ParseIds(args, "criterios_ids");
+
+        var normativaTask = normativaIds.Count > 0
+            ? qdrant.FetchChunksByIdsAsync(normativaIds, "normativa")
+            : Task.FromResult<List<ChunkResult>>([]);
+        var criteriosTask = criteriosIds.Count > 0
+            ? qdrant.FetchChunksByIdsAsync(criteriosIds, "criterios_inss")
+            : Task.FromResult<List<ChunkResult>>([]);
+
+        await Task.WhenAll(normativaTask, criteriosTask);
+
+        var normativaChunks = normativaTask.Result;
+        var criteriosChunks = criteriosTask.Result;
+
+        logger.LogInformation("[AGENT] fetch_details(normativa:{NReq}→{NFound}, criterios:{CReq}→{CFound})",
+            normativaIds.Count, normativaChunks.Count, criteriosIds.Count, criteriosChunks.Count);
+
+        return System.Text.Json.JsonSerializer.Serialize(new
+        {
+            normativa = normativaChunks.Select(ChunkToToolResult),
+            criterios = criteriosChunks.Select(ChunkToToolResult),
+        });
     }
 
     private async Task<string> SearchSentenciasAsync(System.Text.Json.JsonElement args)
@@ -64,51 +111,6 @@ public class ToolExecutor(
         var results = await qdrant.SearchCollectionAsync("sentencias", embedding, sparse, Math.Clamp(topK, 1, 10));
 
         logger.LogInformation("[AGENT] search_sentencias({Query}) → {Count} chunks", query, results.Count);
-        return System.Text.Json.JsonSerializer.Serialize(results.Select(ChunkToToolResult));
-    }
-
-    private async Task<string> SearchCriteriosAsync(System.Text.Json.JsonElement args)
-    {
-        var query = args.GetProperty("query").GetString() ?? "";
-        const int topK = 20; // Fixed: browse always returns 20 lightweight summaries
-
-        var embedding = await openAi.EmbedAsync(query);
-        var sparse = tfidf.BuildSparseVector(query, "criterios_inss");
-        var results = await qdrant.SearchCollectionAsync("criterios_inss", embedding, sparse, topK);
-
-        logger.LogInformation("[AGENT] search_criterios({Query}) → {Count} chunks (metadata-only)", query, results.Count);
-        return System.Text.Json.JsonSerializer.Serialize(results.Select(CriterioToSummary));
-    }
-
-    private async Task<string> GetCriteriosAsync(System.Text.Json.JsonElement args)
-    {
-        var idsElem = args.GetProperty("ids");
-        var ids = new List<object>();
-        foreach (var el in idsElem.EnumerateArray())
-        {
-            if (el.ValueKind == System.Text.Json.JsonValueKind.Number)
-                ids.Add(el.GetInt64());
-            else if (long.TryParse(el.GetString(), out var parsed))
-                ids.Add(parsed);
-        }
-
-        var chunks = await qdrant.FetchChunksByIdsAsync(ids, "criterios_inss");
-        logger.LogInformation("[AGENT] get_criterios({Count} ids) → {Found} chunks", ids.Count, chunks.Count);
-        return System.Text.Json.JsonSerializer.Serialize(chunks.Select(ChunkToToolResult));
-    }
-
-    private async Task<string> GetArticleAsync(System.Text.Json.JsonElement args)
-    {
-        var articleNumber = args.GetProperty("article_number").GetString() ?? "";
-        var lawName = args.GetProperty("law_name").GetString() ?? "";
-
-        var results = await qdrant.FetchByArticleFilterAsync(
-            [(articleNumber, lawName)],
-            openAi.EmbedAsync,
-            tfidf.BuildSparseVector,
-            (tag, msg) => logger.LogDebug("[{Tag}] {Msg}", tag, msg));
-
-        logger.LogInformation("[AGENT] get_article({Art}, {Law}) → {Count} chunks", articleNumber, lawName, results.Count);
         return System.Text.Json.JsonSerializer.Serialize(results.Select(ChunkToToolResult));
     }
 
@@ -130,14 +132,39 @@ public class ToolExecutor(
         return System.Text.Json.JsonSerializer.Serialize(related.Select(ChunkToToolResult));
     }
 
-    /// <summary>Lightweight summary for browse step — no full text.</summary>
+    // ── Helpers ──────────────────────────────────────────────
+
+    private static List<object> ParseIds(System.Text.Json.JsonElement args, string propertyName)
+    {
+        var ids = new List<object>();
+        if (!args.TryGetProperty(propertyName, out var idsElem)) return ids;
+        foreach (var el in idsElem.EnumerateArray())
+        {
+            if (el.ValueKind == System.Text.Json.JsonValueKind.Number)
+                ids.Add(el.GetInt64());
+            else if (long.TryParse(el.GetString(), out var parsed))
+                ids.Add(parsed);
+        }
+        return ids;
+    }
+
+    /// <summary>Lightweight summary for normativa browse — no full text.</summary>
+    private static object NormativaToSummary(ChunkResult r) => new Dictionary<string, object?>
+    {
+        ["id"] = r.Id,
+        ["law"] = r.Law,
+        ["section"] = r.Section,
+        ["chapter"] = r.Chapter,
+        ["resumen"] = r.Resumen,
+    };
+
+    /// <summary>Lightweight summary for criterios browse — no full text.</summary>
     private static object CriterioToSummary(ChunkResult r) => new Dictionary<string, object?>
     {
         ["id"] = r.Id,
         ["criterio_num"] = r.CriterioNum,
         ["fecha"] = r.Fecha,
         ["descripcion"] = r.Resumen,
-        ["score"] = r.WeightedScore > 0 ? r.WeightedScore : r.Score,
     };
 
     private static object ChunkToToolResult(ChunkResult r)
@@ -149,22 +176,18 @@ public class ToolExecutor(
             ["id"] = r.Id,
             ["law"] = r.Law,
             ["section"] = r.Section,
-            ["resumen"] = r.Resumen,
             ["text"] = r.Text,
-            ["score"] = r.WeightedScore > 0 ? r.WeightedScore : r.Score,
             ["collection"] = r.Collection,
         };
 
         if (isCriterio)
         {
-            // Criterio-specific: criterio_num, fecha (skip chapter — it duplicates fecha)
             result["criterio_num"] = r.CriterioNum;
             if (!string.IsNullOrEmpty(r.Fecha))
                 result["fecha"] = r.Fecha;
         }
         else
         {
-            // Normativa/sentencias: chapter is meaningful
             result["chapter"] = r.Chapter;
         }
 
