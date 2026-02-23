@@ -254,6 +254,11 @@ public static class RagAgentEndpoints
     {
         if (string.Equals(code, "rate_limit", StringComparison.OrdinalIgnoreCase)) return true;
         if (string.Equals(code, "rate_limit_exceeded", StringComparison.OrdinalIgnoreCase)) return true;
+        // Foundry masks 429 as generic "server_error" + "Sorry, something went wrong."
+        if (string.Equals(code, "server_error", StringComparison.OrdinalIgnoreCase)
+            && !string.IsNullOrEmpty(message)
+            && message.Contains("sorry", StringComparison.OrdinalIgnoreCase))
+            return true;
         if (string.IsNullOrEmpty(message)) return false;
         var m = message.AsSpan();
         return m.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
