@@ -44,8 +44,14 @@ if (hasFoundry)
     builder.Services.AddScoped<ToolExecutor>();
 }
 
-// ── Keep-alive self-ping (prevents F1 cold starts, 8:00–00:00 CET) ──
-builder.Services.AddHostedService<ChatbotRag.Api.Services.KeepAliveService>();
+// ── Optional self-ping (localhost only; does NOT replace external keepalive) ──
+var selfPingEnabled = string.Equals(
+    Environment.GetEnvironmentVariable("KEEPALIVE_SELF_PING"),
+    "true",
+    StringComparison.OrdinalIgnoreCase);
+
+if (selfPingEnabled)
+    builder.Services.AddHostedService<ChatbotRag.Api.Services.KeepAliveService>();
 
 var app = builder.Build();
 

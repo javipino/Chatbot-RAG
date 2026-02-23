@@ -1,9 +1,10 @@
 namespace ChatbotRag.Api.Services;
 
 /// <summary>
-/// Background service that pings /health every 5 minutes to prevent Azure F1
-/// from putting the app to sleep. Runs 24/7.
-/// CPU cost: ~0.3s/day (negligible vs F1's 60 min/day quota).
+/// Optional background service that pings /health every 5 minutes.
+/// This is useful for diagnostics, but by itself it does NOT guarantee Azure F1
+/// keep-alive because the process must already be running.
+/// Use an external scheduler (for example GitHub Actions cron) for reliable keep-alive.
 /// </summary>
 public class KeepAliveService(ILogger<KeepAliveService> logger) : BackgroundService
 {
@@ -14,10 +15,16 @@ public class KeepAliveService(ILogger<KeepAliveService> logger) : BackgroundServ
         // Wait for the app to fully start before pinging
         await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
 
-        var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
-        using var http = new HttpClient { BaseAddress = new Uri($"http://localhost:{port}") };
+        var targetUrl = Environment.GetEnvironmentVariable("KEEPALIVE_TARGET_URL");
+        var baseUrl = !string.IsNullOrWhiteSpace(targetUrl)
+            ? targetUrl.TrimEnd('/')
+            : $"http://localhost:{Environment.GetEnvironmentVariable("PORT") ?? "8080"}";
 
-        logger.LogInformation("[KeepAlive] Started — pinging /health every {Min} min",
+        using var http = new HttpClient { BaseAddress = new Uri(baseUrl) };
+
+        logger.LogInformation(
+            "[KeepAlive] Started — pinging {Target}/health every {Min} min",
+            baseUrl,
             Interval.TotalMinutes);
 
         while (!stoppingToken.IsCancellationRequested)
