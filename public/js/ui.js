@@ -450,14 +450,12 @@ export const UI = {
         retryBtn.className = 'action-btn primary';
         let seconds = 60;
         retryBtn.textContent = `Reintentar (${seconds}s)`;
-        retryBtn.disabled = true;
 
         const timer = setInterval(() => {
             seconds--;
             if (seconds <= 0) {
                 clearInterval(timer);
                 retryBtn.textContent = 'Reintentar';
-                retryBtn.disabled = false;
             } else {
                 retryBtn.textContent = `Reintentar (${seconds}s)`;
             }
