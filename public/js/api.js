@@ -53,8 +53,9 @@ export const API = {
      *   onToolStatus(name, args) — agent tool call started
      *   onDone(data)           — final event with contextChunkIds / threadId / sources
      *   onError(msg)           — error event
+     *   onRateLimit(msg)       — rate limit event (429 / TPM exceeded)
      */
-    async callStreaming(preset, apiKey, messages, { ragChunkIds = [], threadId = null, onToken, onToolStatus, onDone, onError } = {}) {
+    async callStreaming(preset, apiKey, messages, { ragChunkIds = [], threadId = null, onToken, onToolStatus, onDone, onError, onRateLimit } = {}) {
         const endpoint = preset.endpoint;
         let body;
 
@@ -129,6 +130,8 @@ export const API = {
                     }
                     else if (eventType === 'tool_status' && onToolStatus) onToolStatus(parsed.tool, parsed.args);
                     else if (eventType === 'done' && onDone) onDone(parsed);
+                    else if (eventType === 'rate_limit' && onRateLimit) onRateLimit(parsed.message ?? 'Rate limit exceeded');
+                    else if (eventType === 'rate_limit' && !onRateLimit && onError) onError(parsed.message ?? 'Rate limit exceeded');
                     else if (eventType === 'error' && onError) onError(parsed.error ?? parsed);
                 } catch {
                     // non-JSON data line (heartbeat etc) — ignore

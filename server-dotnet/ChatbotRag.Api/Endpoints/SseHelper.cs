@@ -31,6 +31,9 @@ public static class SseHelper
     public static async Task WriteErrorAsync(HttpResponse response, string message)
         => await WriteEventAsync(response, "error", new { message });
 
+    public static async Task WriteRateLimitAsync(HttpResponse response, string message)
+        => await WriteEventAsync(response, "rate_limit", new { message });
+
     public static void SetSseHeaders(HttpResponse response)
     {
         response.ContentType = "text/event-stream";

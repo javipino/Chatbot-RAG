@@ -435,6 +435,45 @@ export const UI = {
         return text;
     },
 
+    /** Show rate-limit banner with retry button and auto-countdown. */
+    showRateLimitRetry(message, onRetry) {
+        // Remove any existing banner
+        document.querySelector('.rate-limit-banner')?.remove();
+
+        const banner = document.createElement('div');
+        banner.className = 'rate-limit-banner';
+
+        const msgSpan = document.createElement('span');
+        msgSpan.textContent = message;
+
+        const retryBtn = document.createElement('button');
+        retryBtn.className = 'action-btn primary';
+        let seconds = 60;
+        retryBtn.textContent = `Reintentar (${seconds}s)`;
+        retryBtn.disabled = true;
+
+        const timer = setInterval(() => {
+            seconds--;
+            if (seconds <= 0) {
+                clearInterval(timer);
+                retryBtn.textContent = 'Reintentar';
+                retryBtn.disabled = false;
+            } else {
+                retryBtn.textContent = `Reintentar (${seconds}s)`;
+            }
+        }, 1000);
+
+        retryBtn.onclick = () => {
+            clearInterval(timer);
+            onRetry();
+        };
+
+        banner.appendChild(msgSpan);
+        banner.appendChild(retryBtn);
+        this.elements.chat.appendChild(banner);
+        this.scrollToBottom();
+    },
+
     showSaveSuccess(btn) {
         const original = btn.textContent;
         btn.textContent = '✓ Guardado';

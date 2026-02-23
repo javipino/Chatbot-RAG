@@ -524,6 +524,41 @@ body {
     margin: 8px 0;
 }
 
+/* Rate-limit banner */
+.rate-limit-banner {
+    align-self: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    background: #fb923c15;
+    border: 1px solid #fb923c35;
+    color: #fb923c;
+    font-size: 13px;
+    max-width: 80%;
+    border-radius: 10px;
+    padding: 14px 20px;
+    margin: 8px 0;
+    text-align: center;
+}
+.rate-limit-banner button {
+    padding: 6px 18px;
+    border-radius: 8px;
+    border: 1px solid #fb923c50;
+    background: #fb923c20;
+    color: #fb923c;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s, opacity 0.15s;
+}
+.rate-limit-banner button:hover:not(:disabled) {
+    background: #fb923c35;
+}
+.rate-limit-banner button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
 /* Message actions */
 .msg-actions {
     display: flex;

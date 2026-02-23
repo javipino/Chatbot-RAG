@@ -1,3 +1,4 @@
+using Azure;
 using Azure.AI.Agents.Persistent;
 using ChatbotRag.Api.Agent;
 using ChatbotRag.Api.Models;
@@ -67,6 +68,12 @@ public static class RagAgentEndpoints
                     logger.LogError(retryEx, "RAG Agent error (thread retry)");
                     await SseHelper.WriteErrorAsync(ctx.Response, $"{retryEx.GetType().Name}: {retryEx.Message}");
                 }
+            }
+            catch (RequestFailedException rfe) when (rfe.Status == 429)
+            {
+                logger.LogWarning("[AGENT] HTTP 429 rate limit: {Msg}", rfe.Message);
+                await SseHelper.WriteRateLimitAsync(ctx.Response,
+                    "Has superado el límite de tokens por minuto. Espera un momento y reintenta.");
             }
             catch (Exception ex)
             {
@@ -174,7 +181,18 @@ public static class RagAgentEndpoints
 
                     case RunUpdate runUpdate when update.UpdateKind == StreamingUpdateReason.RunFailed:
                         var errorMsg = runUpdate.Value.LastError?.Message ?? "Run failed";
-                        logger.LogError("[AGENT] Run failed: {Error} (resumed={Resumed})", errorMsg, !string.IsNullOrEmpty(req.ThreadId));
+                        var errorCode = runUpdate.Value.LastError?.Code;
+                        logger.LogError("[AGENT] Run failed: code={Code} error={Error} (resumed={Resumed})",
+                            errorCode, errorMsg, !string.IsNullOrEmpty(req.ThreadId));
+
+                        // Detect rate limit (429 / TPM / RPM)
+                        if (IsRateLimitError(errorMsg, errorCode))
+                        {
+                            await SseHelper.WriteRateLimitAsync(ctx.Response,
+                                "Has superado el límite de tokens por minuto. Espera un momento y reintenta.");
+                            return;
+                        }
+
                         // If we were resuming a thread and the run failed, signal to retry with a fresh thread
                         if (!string.IsNullOrEmpty(req.ThreadId))
                             throw new InvalidOperationException($"THREAD_RETRY:{errorMsg}");
@@ -230,6 +248,20 @@ public static class RagAgentEndpoints
             threadId = thread.Id,
             sources,
         });
+    }
+
+    private static bool IsRateLimitError(string message, string? code)
+    {
+        if (string.Equals(code, "rate_limit", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.Equals(code, "rate_limit_exceeded", StringComparison.OrdinalIgnoreCase)) return true;
+        if (string.IsNullOrEmpty(message)) return false;
+        var m = message.AsSpan();
+        return m.Contains("rate limit", StringComparison.OrdinalIgnoreCase)
+            || m.Contains("429", StringComparison.Ordinal)
+            || m.Contains("tokens per minute", StringComparison.OrdinalIgnoreCase)
+            || m.Contains("TPM", StringComparison.Ordinal)
+            || m.Contains("RPM", StringComparison.Ordinal)
+            || m.Contains("quota", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>

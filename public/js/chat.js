@@ -385,6 +385,18 @@ export const Chat = {
                     UI.finalizeStreamingMessage(msgDiv, accumulated || '(error)', null);
                     UI.addMessage('error', msg);
                 },
+
+                onRateLimit: (msg) => {
+                    // Remove the empty streaming bubble
+                    if (!accumulated) msgDiv.remove();
+                    else UI.finalizeStreamingMessage(msgDiv, accumulated, null);
+
+                    UI.showRateLimitRetry(msg, () => {
+                        document.querySelector('.rate-limit-banner')?.remove();
+                        // Resend — user message is already in conversationHistory
+                        this.doSend(preset, apiKey);
+                    });
+                },
             });
         } catch (err) {
             UI.finalizeStreamingMessage(msgDiv, accumulated || '(error)', null);
