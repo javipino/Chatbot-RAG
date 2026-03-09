@@ -90,7 +90,7 @@ public class AnswerStage(OpenAiService openAi)
         var chatMessages = BuildMessages(context, messages);
         var rawBuilder = new System.Text.StringBuilder();
 
-        await foreach (var token in openAi.CallGpt52StreamingAsync(chatMessages))
+        await foreach (var token in openAi.CallGpt54StreamingAsync(chatMessages))
         {
             rawBuilder.Append(token);
             yield return (token, null);
@@ -106,7 +106,7 @@ public class AnswerStage(OpenAiService openAi)
         string context, IList<ApiChatMessage> messages)
     {
         var chatMessages = BuildMessages(context, messages);
-        var raw = await openAi.CallGpt52Async(chatMessages);
+        var raw = await openAi.CallGpt54Async(chatMessages);
         var meta = ParseMeta(raw);
 
         const string delimiter = "===META";

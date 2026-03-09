@@ -3,7 +3,7 @@
 > **Implementación:** `server-dotnet/ChatbotRag.Api/Agent/` + `Endpoints/RagAgentEndpoints.cs`
 > **Endpoint:** `POST /api/rag-agent` (SSE streaming)
 > **Preset frontend:** `ss-expert-agent`
-> **Tecnología:** Azure AI Foundry · Azure.AI.Agents.Persistent 1.1.0 · GPT-5.2
+> **Tecnología:** Azure AI Foundry · Azure.AI.Agents.Persistent 1.1.0 · GPT-5.4
 
 ---
 
@@ -250,7 +250,7 @@ El `threadId` se devuelve en el evento `done` y el frontend lo almacena en `chat
 
 `AgentManager` se registra como **singleton** en DI (`AddSingleton<AgentManager>()`). El agente se crea una sola vez en el primer request y se reutiliza en todas las peticiones posteriores.
 
-El agente se registra bajo el nombre `"ss-expert"` en Azure AI Foundry con el modelo `gpt-5.2`. Si la app se reinicia, se crea un nuevo agente (el anterior queda huérfano en Foundry hasta limpieza manual).
+El agente se registra bajo el nombre `"ss-expert"` en Azure AI Foundry con el modelo `gpt-5.4`. Si la app se reinicia, se crea un nuevo agente (el anterior queda huérfano en Foundry hasta limpieza manual).
 
 **Auth:** `DefaultAzureCredential` (Azure.Identity). En producción el App Service necesita:
 1. **System-Assigned Managed Identity** habilitada en el App Service

@@ -48,7 +48,7 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 - ~~SpeechAI-Javi~~ — Eliminado (no usado)
 
 ### Deployments OpenAI
-- **Principal:** `gpt-5.2`, `gpt-5.2-codex`
+- **Principal:** `gpt-5.4`, `gpt-5.3-codex`
 - **Reader:** `text-embedding-3-small` (1536 dims), `gpt-5-nano`
 
 ### Azure AI Foundry
@@ -84,7 +84,7 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 - **Hosting:** Azure App Service F1 (free tier), Linux, runtime `DOTNETCORE|10.0`
 - **Startup command:** `dotnet ChatbotRag.Api.dll`
 - **Vector DB:** Qdrant Cloud (free tier)
-- **LLMs:** Azure OpenAI (GPT-5.2 + GPT-5 Nano + text-embedding-3-small)
+- **LLMs:** Azure OpenAI (GPT-5.4 + GPT-5 Nano + text-embedding-3-small)
 - **CI/CD:** `.github/workflows/deploy-dotnet.yml` — `dotnet publish` + zip deploy vía Kudu
 
 ### RAG Pipeline
@@ -92,7 +92,7 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 ```
 Query → 1.Expand(Nano) → 2.Embed(e3s) → 3.Sparse(TF-IDF)
      → 4.Search(Qdrant ×2 colecciones, híbrido RRF)
-     → 5b.Refs(filtradas, score heredado) → Cap(sort+top25) → 5.Answer+Eval(GPT-5.2)
+     → 5b.Refs(filtradas, score heredado) → Cap(sort+top25) → 5.Answer+Eval(GPT-5.4)
 ```
 
 - **Query expansion:** GPT-5 Nano genera 1-4 búsquedas de keywords (3-6 palabras)
@@ -101,7 +101,7 @@ Query → 1.Expand(Nano) → 2.Embed(e3s) → 3.Sparse(TF-IDF)
 - **Cross-collection (pipeline):** 2 colecciones en paralelo, ponderación (normativa×1.0, criterios_inss×0.9). Sentencias excluidas del pipeline (demasiado ruidosas); disponibles solo vía herramienta del agente.
 - **Reference expansion:** Refs pre-computadas filtradas (dirección ascendente, siblings, cap 3/chunk, cap global 15 refs). Score heredado = padre × 0.8
 - **Scoring & Cap:** Todos los chunks se puntúan con `_score`, se ordenan por score desc y se toman top 25 (`MAX_CHUNKS_TO_MODEL`)
-- **Unified answer:** GPT-5.2 responde + reporta USED/DROP/NEED en una sola llamada
+- **Unified answer:** GPT-5.4 responde + reporta USED/DROP/NEED en una sola llamada
 - **DROP → carryover:** Chunks marcados como DROP no se arrastran a turnos siguientes
 - **Vocabulario TF-IDF:** 3 JSONs estáticos por colección desplegados con el servidor (`server-dotnet/ChatbotRag.Api/Data/tfidf_vocabulary*.json`)
 
@@ -187,9 +187,9 @@ El frontend (`api.js` → `callStreaming()`) maneja estos eventos mostrando toke
 │       │   ├── ExpandStage.cs   # Stage 1: Query decomposition (Nano)
 │       │   ├── SearchStage.cs   # Stages 2-4: Embed + sparse + Qdrant
 │       │   ├── EnrichStage.cs   # Stage 5b: Reference expansion
-│       │   └── AnswerStage.cs   # Stage 5: GPT-5.2 answer + eval
+│       └── AnswerStage.cs   # Stage 5: GPT-5.4 answer + eval
 │       └── Services/
-│           ├── OpenAiService.cs # embed(), callNano(), callGPT52(), streaming
+│           ├── OpenAiService.cs # embed(), callNano(), callGPT54(), streaming
 │           ├── QdrantService.cs # searchCollection(), fetchByIds()
 │           └── TfidfService.cs  # Sparse vector computation
 ├── src/scripts/                 # Offline processing (Python + Node.js)

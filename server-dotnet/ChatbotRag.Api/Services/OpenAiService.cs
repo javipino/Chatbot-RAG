@@ -14,7 +14,7 @@ public class OpenAiService
 {
     private readonly EmbeddingClient _embeddingClient;
     private readonly ChatClient _nanoClient;
-    private readonly ChatClient _gpt52Client;
+    private readonly ChatClient _gpt54Client;
 
     public OpenAiService()
     {
@@ -26,12 +26,12 @@ public class OpenAiService
         _embeddingClient = readerClient.GetEmbeddingClient(AppConfig.EmbeddingDeployment);
         _nanoClient = readerClient.GetChatClient(AppConfig.NanoDeployment);
 
-        // Principal endpoint: gpt-5.2
+        // Principal endpoint: gpt-5.4
         var principalClient = new AzureOpenAIClient(
             new Uri($"https://{AppConfig.PrincipalEndpoint}/"),
             new AzureKeyCredential(AppConfig.PrincipalKey));
 
-        _gpt52Client = principalClient.GetChatClient(AppConfig.Gpt52Deployment);
+        _gpt54Client = principalClient.GetChatClient(AppConfig.Gpt54Deployment);
     }
 
     /// <summary>Embed text using text-embedding-3-small (1536 dims).</summary>
@@ -49,16 +49,16 @@ public class OpenAiService
         return result.Value.Content[0].Text ?? "";
     }
 
-    /// <summary>Call gpt-5.2 (Principal endpoint) — single response.</summary>
-    public async Task<string> CallGpt52Async(IEnumerable<ChatMessage> messages)
+    /// <summary>Call gpt-5.4 (Principal endpoint) — single response.</summary>
+    public async Task<string> CallGpt54Async(IEnumerable<ChatMessage> messages)
     {
-        var result = await _gpt52Client.CompleteChatAsync(messages.ToList());
+        var result = await _gpt54Client.CompleteChatAsync(messages.ToList());
         return result.Value.Content[0].Text ?? "";
     }
 
-    public async IAsyncEnumerable<string> CallGpt52StreamingAsync(IEnumerable<ChatMessage> messages)
+    public async IAsyncEnumerable<string> CallGpt54StreamingAsync(IEnumerable<ChatMessage> messages)
     {
-        await foreach (var update in _gpt52Client.CompleteChatStreamingAsync(messages.ToList()))
+        await foreach (var update in _gpt54Client.CompleteChatStreamingAsync(messages.ToList()))
         {
             foreach (var part in update.ContentUpdate)
                 if (!string.IsNullOrEmpty(part.Text))
@@ -66,14 +66,14 @@ public class OpenAiService
         }
     }
 
-    /// <summary>Call gpt-5.2 with function tools.</summary>
-    public async Task<ChatCompletion> CallGpt52WithToolsAsync(
+    /// <summary>Call gpt-5.4 with function tools.</summary>
+    public async Task<ChatCompletion> CallGpt54WithToolsAsync(
         IEnumerable<ChatMessage> messages, IEnumerable<ChatTool> tools,
         ChatToolChoice? toolChoice = null)
     {
         var opts = new ChatCompletionOptions();
         foreach (var t in tools) opts.Tools.Add(t);
         if (toolChoice != null) opts.ToolChoice = toolChoice;
-        return (await _gpt52Client.CompleteChatAsync(messages.ToList(), opts)).Value;
+        return (await _gpt54Client.CompleteChatAsync(messages.ToList(), opts)).Value;
     }
 }

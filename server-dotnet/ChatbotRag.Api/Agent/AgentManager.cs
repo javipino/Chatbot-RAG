@@ -101,7 +101,7 @@ public class AgentManager : IAsyncDisposable
 
         var body = new Dictionary<string, object>
         {
-            ["model"] = AppConfig.Gpt52Deployment,
+            ["model"] = AppConfig.Gpt54Deployment,
             ["name"] = "ss-expert",
             ["instructions"] = BuildAgentInstructions(),
             ["tools"] = tools,

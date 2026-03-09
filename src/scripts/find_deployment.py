@@ -10,12 +10,12 @@ API_KEY = os.environ["AZURE_OPENAI_KEY"]  # Required
 # Try various possible deployment names
 candidates = [
     "gpt-5-nano",
-    "gpt-5.2",
-    "gpt-52",
-    "gpt-5-2",
-    "gpt-52-codex",
-    "gpt-5.2-codex",
-    "gpt-5-2-codex",
+    "gpt-5.4",
+    "gpt-54",
+    "gpt-5-4",
+    "gpt-53-codex",
+    "gpt-5.3-codex",
+    "gpt-5-3-codex",
 ]
 
 simple_payload = json.dumps({

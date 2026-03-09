@@ -4,7 +4,7 @@ Sistema RAG (Retrieval-Augmented Generation) para consultar normativa laboral y 
 
 ## Descripción
 
-Chatbot multi-modelo con backend .NET y dos modos RAG (pipeline y agente) especializados en legislación laboral española. Los documentos se indexan en Qdrant Cloud con embeddings + sparse vectors (TF-IDF), permitiendo búsqueda híbrida con fusión RRF + respuestas generadas por GPT-5.2.
+Chatbot multi-modelo con backend .NET y dos modos RAG (pipeline y agente) especializados en legislación laboral española. Los documentos se indexan en Qdrant Cloud con embeddings + sparse vectors (TF-IDF), permitiendo búsqueda híbrida con fusión RRF + respuestas generadas por GPT-5.4.
 
 **Fuentes de datos (3 colecciones en Qdrant Cloud):**
 1. **Normativa** — BOE "Código Laboral y de la Seguridad Social" (5,301 chunks enriquecidos)
@@ -24,9 +24,9 @@ Usuario → App Service (.NET 10 Minimal API)
            │     3. Sparse vector (TF-IDF local, per-collection)
            │     4. Hybrid search (Qdrant ×2 colecciones, RRF)
            │     5b. Reference expansion (pre-computed refs)
-           │     5. Unified answer + eval (GPT-5.2)
+           │     5. Unified answer + eval (GPT-5.4)
            └── /api/rag-agent    → Agente AI Foundry (SSE streaming):
-                 GPT-5.2 con 5 herramientas RAG iterativas
+                 GPT-5.4 con 5 herramientas RAG iterativas
 ```
 
 ## Estructura del proyecto
@@ -58,18 +58,18 @@ Usuario → App Service (.NET 10 Minimal API)
 - **Frontend:** Vanilla JS with ES modules (no framework, no bundler)
 - **Hosting:** Azure App Service F1 (free tier, Linux) — `func-consultas-internas`
 - **Vector DB:** Qdrant Cloud (free tier, 1GB RAM, 3 colecciones)
-- **LLMs:** Azure OpenAI — GPT-5.2, GPT-5 Nano, text-embedding-3-small
-- **Agent:** Azure AI Foundry (GPT-5.2 con 5 function tools)
+- **LLMs:** Azure OpenAI — GPT-5.4, GPT-5 Nano, text-embedding-3-small
+- **Agent:** Azure AI Foundry (GPT-5.4 con 5 function tools)
 - **CI/CD:** GitHub Actions → `dotnet publish` + zip deploy vía Kudu
 
 ## Presets disponibles
 
 | Preset | Modelo | Endpoint | Descripción |
 |--------|--------|----------|-------------|
-| GPT-5.2 | `gpt-5.2` | `/api/chat` | Modelo general |
-| GPT-5.2 Codex | `gpt-5.2-codex` | `/api/chat` | Modelo de código |
-| SS Expert (RAG) | `gpt-5.2` + Qdrant | `/api/rag-pipeline` | Pipeline RAG (normativa + criterios) |
-| SS Expert (Agente) | `gpt-5.2` + Foundry | `/api/rag-agent` | Agente con 5 herramientas RAG |
+| GPT-5.4 | `gpt-5.4` | `/api/chat` | Modelo general |
+| GPT-5.3 Codex | `gpt-5.3-codex` | `/api/chat` | Modelo de código |
+| SS Expert (RAG) | `gpt-5.4` + Qdrant | `/api/rag-pipeline` | Pipeline RAG (normativa + criterios) |
+| SS Expert (Agente) | `gpt-5.4` + Foundry | `/api/rag-agent` | Agente con 5 herramientas RAG |
 
 ## Despliegue
 

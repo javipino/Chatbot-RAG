@@ -8,16 +8,16 @@ export const Config = {
     // Model presets
     MODEL_PRESETS: [
         {
-            id: 'gpt-5.2-codex',
-            name: 'GPT-5.2 Codex',
+            id: 'gpt-5.3-codex',
+            name: 'GPT-5.3 Codex',
             provider: 'azure-openai',
             format: 'responses',
             host: 'javie-mku5l3k8-swedencentral.cognitiveservices.azure.com',
             path: '/openai/responses?api-version=2025-04-01-preview',
         },
         {
-            id: 'gpt-5.2',
-            name: 'GPT-5.2',
+            id: 'gpt-5.4',
+            name: 'GPT-5.4',
             provider: 'azure-openai',
             format: 'responses',
             host: 'javie-mku5l3k8-swedencentral.cognitiveservices.azure.com',

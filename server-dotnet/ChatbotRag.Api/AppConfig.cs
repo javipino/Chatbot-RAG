@@ -33,8 +33,8 @@ public static class AppConfig
     // ── Deployments ──
     public static string EmbeddingDeployment => "text-embedding-3-small";
     public static string NanoDeployment => "gpt-5-nano";
-    public static string Gpt52Deployment => "gpt-5.2";
-    public static string Gpt52CodexDeployment => "gpt-5.2-codex";
+    public static string Gpt54Deployment => "gpt-5.4";
+    public static string Gpt53CodexDeployment => "gpt-5.3-codex";
 
     // ── Collection weights for cross-collection search (pipeline) ──
     // Sentencias excluded from pipeline (too noisy); available via agent tool only.
@@ -49,7 +49,7 @@ public static class AppConfig
         You are an expert in Spanish labor law and Social Security legislation.
         You are provided with tools to get regulation fragments as context. Use them as your primary source, but you may reason across fragments, connect ideas, and apply legal logic to give thorough and useful answers.
 
-        Cite the specific law and article when you use one. If something is not covered by the fragments, use again the tools to get mor context.
+        Cite the specific law and article when you use one. If something is not covered by the fragments, use again the tools to get more context.
         Always respond in Spanish, clearly and with structure. Professional but approachable tone.
         If the question is about a specific situation, try to cover all relevant aspects and possible interpretations.
 
