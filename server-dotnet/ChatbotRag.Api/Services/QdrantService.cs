@@ -310,4 +310,120 @@ public class QdrantService(IHttpClientFactory httpClientFactory, ILogger<QdrantS
                    .Where(w => w.Length > 3)
                    .Take(2));
     }
+
+    // ── Admin write operations ──
+
+    /// <summary>Get the current point count for a collection (used to assign next ID).</summary>
+    public async Task<long> GetPointCountAsync(string collectionName)
+    {
+        var client = CreateClient();
+        var response = await client.GetAsync($"/collections/{collectionName}");
+        response.EnsureSuccessStatusCode();
+        var info = await response.Content.ReadFromJsonAsync<CollectionInfoResponse>();
+        return info?.Result?.PointsCount ?? 0;
+    }
+
+    /// <summary>Upsert a single point with dense + sparse vectors and payload.</summary>
+    public async Task UpsertPointAsync(string collectionName, long id, float[] denseVector,
+        QdrantSparseQuery? sparseVector, Dictionary<string, object?> payload)
+    {
+        var namedVectors = new Dictionary<string, object>
+        {
+            ["text-dense"] = denseVector
+        };
+        if (sparseVector != null)
+        {
+            namedVectors["text-sparse"] = new { indices = sparseVector.Indices, values = sparseVector.Values };
+        }
+
+        var body = new
+        {
+            points = new[]
+            {
+                new
+                {
+                    id,
+                    vector = namedVectors,
+                    payload
+                }
+            }
+        };
+
+        var client = CreateClient();
+        var response = await client.PutAsJsonAsync($"/collections/{collectionName}/points?wait=true", body);
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>Delete a point by ID.</summary>
+    public async Task DeletePointAsync(string collectionName, long id)
+    {
+        var body = new { points = new[] { id } };
+        var client = CreateClient();
+        var response = await client.PostAsJsonAsync($"/collections/{collectionName}/points/delete?wait=true", body);
+        response.EnsureSuccessStatusCode();
+    }
+
+    /// <summary>Scroll/search points by optional metadata filters.</summary>
+    public async Task<List<AdminSearchResult>> ScrollPointsAsync(
+        string collectionName, string? query = null, string? lawFilter = null, int limit = 50)
+    {
+        var must = new List<object>();
+        if (!string.IsNullOrWhiteSpace(lawFilter))
+            must.Add(new { key = "law", match = new { text = lawFilter } });
+        if (!string.IsNullOrWhiteSpace(query))
+        {
+            // Use a match on section or titulo depending on collection
+            var field = collectionName == "criterios_inss" ? "titulo" : "section";
+            must.Add(new { key = field, match = new { text = query } });
+        }
+
+        var filter = must.Count > 0 ? new { must } : (object?)null;
+        var body = new { filter, limit, with_payload = true };
+
+        var client = CreateClient();
+        var response = await client.PostAsJsonAsync($"/collections/{collectionName}/points/scroll", body);
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content.ReadFromJsonAsync<QdrantScrollResponse>();
+        return (result?.Result?.Points ?? []).Select(p => new AdminSearchResult
+        {
+            Id = p.Id,
+            Law = p.Payload?.Law,
+            Section = p.Payload?.Section,
+            Chapter = p.Payload?.Chapter,
+            Text = p.Payload?.Text,
+            Collection = collectionName,
+            Titulo = p.Payload?.Titulo,
+            Descripcion = p.Payload?.Descripcion,
+            Fecha = p.Payload?.Fecha,
+            CriterioNum = p.Payload?.CriterioNum,
+            PalabrasClave = p.Payload?.PalabrasClave,
+        }).ToList();
+    }
+
+    /// <summary>Fetch a single point by ID with full payload.</summary>
+    public async Task<AdminSearchResult?> GetPointByIdAsync(string collectionName, long id)
+    {
+        var body = new QdrantFetchRequest { Ids = [id], WithPayload = true, WithVector = false };
+        var client = CreateClient();
+        var response = await client.PostAsJsonAsync($"/collections/{collectionName}/points", body);
+        response.EnsureSuccessStatusCode();
+        var result = await response.Content.ReadFromJsonAsync<QdrantFetchResponse>();
+        var p = result?.Result?.FirstOrDefault();
+        if (p == null) return null;
+        return new AdminSearchResult
+        {
+            Id = p.Id,
+            Law = p.Payload?.Law,
+            Section = p.Payload?.Section,
+            Chapter = p.Payload?.Chapter,
+            Text = p.Payload?.Text,
+            Collection = collectionName,
+            Titulo = p.Payload?.Titulo,
+            Descripcion = p.Payload?.Descripcion,
+            Fecha = p.Payload?.Fecha,
+            CriterioNum = p.Payload?.CriterioNum,
+            PalabrasClave = p.Payload?.PalabrasClave,
+        };
+    }
 }

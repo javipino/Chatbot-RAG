@@ -29,6 +29,7 @@ builder.Services.AddHttpClient("forward", c =>
 builder.Services.AddSingleton<TfidfService>();
 builder.Services.AddSingleton<OpenAiService>();
 builder.Services.AddScoped<QdrantService>();
+builder.Services.AddScoped<AdminService>();
 
 // ── Pipeline stages ──
 builder.Services.AddScoped<ExpandStage>();
@@ -84,7 +85,11 @@ else
 app.MapGet("/health", () => Results.Ok(new { status = "ok", ts = DateTime.UtcNow }));
 app.MapChat();
 app.MapRagPipeline();
+app.MapAdmin();
 if (hasFoundry) app.MapRagAgent();
+
+// Redirect /admin to /admin.html (before SPA fallback)
+app.MapGet("/admin", () => Results.Redirect("/admin.html"));
 
 // ── SPA fallback (serve index.html for any non-API route) ──
 app.MapFallback(async ctx =>

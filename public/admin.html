@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin — RAG Data Management</title>
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e; color: #e0e0e0; min-height: 100vh;
+        }
+        header {
+            background: #16213e; padding: 12px 24px; display: flex;
+            align-items: center; justify-content: space-between; border-bottom: 1px solid #0f3460;
+        }
+        header h1 { font-size: 1.2rem; color: #e94560; }
+        header a { color: #8892b0; text-decoration: none; font-size: 0.85rem; }
+        header a:hover { color: #e94560; }
+        .api-key-bar {
+            background: #16213e; padding: 8px 24px; display: flex; align-items: center; gap: 12px;
+            border-bottom: 1px solid #0f3460; font-size: 0.85rem;
+        }
+        .api-key-bar input {
+            background: #1a1a2e; border: 1px solid #0f3460; color: #e0e0e0;
+            padding: 4px 10px; border-radius: 4px; width: 280px; font-size: 0.85rem;
+        }
+        .tabs {
+            display: flex; background: #16213e; border-bottom: 2px solid #0f3460;
+        }
+        .tab {
+            padding: 10px 28px; cursor: pointer; color: #8892b0; font-size: 0.9rem;
+            border-bottom: 2px solid transparent; transition: all 0.2s;
+        }
+        .tab:hover { color: #e0e0e0; }
+        .tab.active { color: #e94560; border-bottom-color: #e94560; }
+        .panel { display: none; padding: 24px; max-width: 1100px; margin: 0 auto; }
+        .panel.active { display: block; }
+        h2 { font-size: 1rem; color: #e94560; margin-bottom: 16px; }
+        h3 { font-size: 0.9rem; color: #8892b0; margin: 20px 0 10px; }
+        .form-group { margin-bottom: 12px; }
+        .form-group label { display: block; font-size: 0.8rem; color: #8892b0; margin-bottom: 4px; }
+        .form-group input, .form-group textarea, .form-group select {
+            width: 100%; background: #1a1a2e; border: 1px solid #0f3460; color: #e0e0e0;
+            padding: 8px 12px; border-radius: 4px; font-size: 0.85rem; font-family: inherit;
+        }
+        .form-group textarea { min-height: 120px; resize: vertical; }
+        .form-row { display: flex; gap: 12px; }
+        .form-row .form-group { flex: 1; }
+        button {
+            background: #e94560; color: #fff; border: none; padding: 8px 20px;
+            border-radius: 4px; cursor: pointer; font-size: 0.85rem; transition: background 0.2s;
+        }
+        button:hover { background: #c73853; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        button.secondary {
+            background: transparent; border: 1px solid #0f3460; color: #8892b0;
+        }
+        button.secondary:hover { border-color: #e94560; color: #e94560; }
+        button.danger { background: #7d1128; }
+        button.danger:hover { background: #a0162f; }
+        .btn-sm { padding: 4px 12px; font-size: 0.78rem; }
+        .progress-log {
+            background: #0d1117; border: 1px solid #0f3460; border-radius: 4px;
+            padding: 12px; margin: 12px 0; max-height: 200px; overflow-y: auto;
+            font-family: 'Cascadia Code', 'Fira Code', monospace; font-size: 0.78rem;
+            line-height: 1.6; display: none;
+        }
+        .progress-log.visible { display: block; }
+        .progress-log .step { color: #8892b0; }
+        .progress-log .step::before { content: "▸ "; color: #e94560; }
+        .progress-log .done { color: #4caf50; }
+        .progress-log .error { color: #e94560; }
+        .search-bar {
+            display: flex; gap: 8px; margin-bottom: 16px;
+        }
+        .search-bar input { flex: 1; }
+        table {
+            width: 100%; border-collapse: collapse; font-size: 0.82rem; margin-top: 12px;
+        }
+        th { text-align: left; color: #8892b0; border-bottom: 1px solid #0f3460; padding: 8px 6px; }
+        td { padding: 8px 6px; border-bottom: 1px solid rgba(15,52,96,0.3); vertical-align: top; }
+        td.text-preview { max-width: 350px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        tr:hover { background: rgba(233,69,96,0.05); }
+        .actions { display: flex; gap: 6px; }
+        .empty-msg { color: #555; font-style: italic; padding: 20px 0; text-align: center; }
+        .edit-overlay {
+            display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7);
+            z-index: 100; justify-content: center; align-items: center;
+        }
+        .edit-overlay.visible { display: flex; }
+        .edit-modal {
+            background: #16213e; border-radius: 8px; padding: 24px; width: 700px;
+            max-width: 95vw; max-height: 90vh; overflow-y: auto; border: 1px solid #0f3460;
+        }
+        .edit-modal h3 { margin-top: 0; }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>RAG Admin Panel</h1>
+        <a href="/">← Volver al chat</a>
+    </header>
+
+    <div class="api-key-bar">
+        <label>API Key:</label>
+        <input type="password" id="apiKeyInput" placeholder="x-api-key" />
+    </div>
+
+    <div class="tabs">
+        <div class="tab active" data-tab="criterios">Criterios INSS</div>
+        <div class="tab" data-tab="normativa">Normativa</div>
+    </div>
+
+    <!-- ═══ CRITERIOS TAB ═══ -->
+    <div class="panel active" id="panel-criterios">
+        <h2>Subir nuevo criterio</h2>
+        <div class="form-group">
+            <label>Archivo PDF *</label>
+            <input type="file" id="criterioPdf" accept=".pdf" />
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Título *</label>
+                <input type="text" id="criterioTitulo" placeholder="Título del criterio" />
+            </div>
+            <div class="form-group">
+                <label>Fecha</label>
+                <input type="text" id="criterioFecha" placeholder="DD/MM/YYYY" />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Descripción</label>
+                <input type="text" id="criterioDescripcion" placeholder="Breve descripción" />
+            </div>
+            <div class="form-group">
+                <label>Emisor</label>
+                <input type="text" id="criterioEmisor" placeholder="INSS / DGOSS" />
+            </div>
+        </div>
+        <button id="btnUploadCriterio">Subir criterio</button>
+        <div class="progress-log" id="criterioProgress"></div>
+
+        <h3>Criterios existentes</h3>
+        <div class="search-bar">
+            <input type="text" id="criterioSearch" placeholder="Buscar por título..." />
+            <button class="secondary" id="btnSearchCriterios">Buscar</button>
+        </div>
+        <div id="criteriosTable"></div>
+    </div>
+
+    <!-- ═══ NORMATIVA TAB ═══ -->
+    <div class="panel" id="panel-normativa">
+        <h2>Buscar chunks de normativa</h2>
+        <div class="search-bar">
+            <input type="text" id="normativaSearch" placeholder="Buscar por sección..." />
+            <input type="text" id="normativaLaw" placeholder="Filtrar por ley..." style="max-width:250px" />
+            <button class="secondary" id="btnSearchNormativa">Buscar</button>
+        </div>
+        <div id="normativaTable"></div>
+
+        <h3>Añadir nuevo chunk</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label>Ley *</label>
+                <input type="text" id="normLaw" placeholder="Ej: Ley del Estatuto de los Trabajadores" />
+            </div>
+            <div class="form-group">
+                <label>Capítulo</label>
+                <input type="text" id="normChapter" placeholder="Ej: Capítulo II" />
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Sección *</label>
+            <input type="text" id="normSection" placeholder="Ej: Artículo 34. Jornada" />
+        </div>
+        <div class="form-group">
+            <label>Texto *</label>
+            <textarea id="normText" placeholder="Texto completo del artículo o sección..."></textarea>
+        </div>
+        <button id="btnAddNormativa">Añadir chunk</button>
+        <div class="progress-log" id="normativaProgress"></div>
+    </div>
+
+    <!-- ═══ EDIT MODAL ═══ -->
+    <div class="edit-overlay" id="editOverlay">
+        <div class="edit-modal">
+            <h3>Editar chunk normativa</h3>
+            <input type="hidden" id="editId" />
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Ley</label>
+                    <input type="text" id="editLaw" />
+                </div>
+                <div class="form-group">
+                    <label>Capítulo</label>
+                    <input type="text" id="editChapter" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Sección</label>
+                <input type="text" id="editSection" />
+            </div>
+            <div class="form-group">
+                <label>Texto</label>
+                <textarea id="editText" style="min-height:200px"></textarea>
+            </div>
+            <div class="progress-log" id="editProgress"></div>
+            <div style="display:flex;gap:8px;margin-top:12px">
+                <button id="btnSaveEdit">Guardar cambios</button>
+                <button class="secondary" id="btnCancelEdit">Cancelar</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="/js/admin.js"></script>
+</body>
+</html>
