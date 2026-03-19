@@ -94,6 +94,17 @@
             max-width: 95vw; max-height: 90vh; overflow-y: auto; border: 1px solid #0f3460;
         }
         .edit-modal h3 { margin-top: 0; }
+        .badge { display:inline-block;padding:2px 8px;border-radius:3px;font-size:0.72rem;font-weight:600; }
+        .badge-replace { background:#1b4332;color:#52b788; }
+        .badge-add { background:#1a1a3e;color:#64b5f6; }
+        .badge-skip { background:#333;color:#888; }
+        .chunk-row { display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid rgba(15,52,96,0.3); }
+        .chunk-row:hover { background:rgba(233,69,96,0.05); }
+        .chunk-info { flex:1;min-width:0; }
+        .chunk-section { font-weight:600;font-size:0.85rem; }
+        .chunk-meta { font-size:0.75rem;color:#8892b0;margin-top:2px; }
+        .chunk-preview { font-size:0.78rem;color:#666;margin-top:4px;max-height:40px;overflow:hidden; }
+        .chunk-actions { display:flex;gap:6px;align-items:center;flex-shrink:0; }
     </style>
 </head>
 <body>
@@ -125,8 +136,22 @@
                 <input type="text" id="criterioTitulo" placeholder="Título del criterio" />
             </div>
             <div class="form-group">
+                <label>Nº Criterio</label>
+                <input type="text" id="criterioNum" placeholder="Ej: 6/2026" />
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
                 <label>Fecha</label>
                 <input type="text" id="criterioFecha" placeholder="DD/MM/YYYY" />
+            </div>
+            <div class="form-group">
+                <label>Estado</label>
+                <select id="criterioEstado">
+                    <option value="Vigente">Vigente</option>
+                    <option value="Derogado">Derogado</option>
+                    <option value="Sustituido">Sustituido</option>
+                </select>
             </div>
         </div>
         <div class="form-row">
@@ -152,35 +177,44 @@
 
     <!-- ═══ NORMATIVA TAB ═══ -->
     <div class="panel" id="panel-normativa">
-        <h2>Buscar chunks de normativa</h2>
+        <h2>Actualizar normativa</h2>
+        <p style="color:#8892b0;font-size:0.82rem;margin-bottom:16px">
+            Pega el texto de uno o varios artículos. El sistema detectará automáticamente los artículos,
+            la ley, y buscará si ya existen para reemplazarlos o añadirlos.
+        </p>
+
+        <div class="form-group">
+            <label>Ley (opcional — se auto-detecta del texto)</label>
+            <input type="text" id="normLaw" placeholder="Ej: Texto refundido de la Ley del Estatuto de los Trabajadores" />
+        </div>
+        <div class="form-group">
+            <label>Pega aquí el texto con los artículos *</label>
+            <textarea id="normRawText" placeholder="Artículo 34.  Jornada.&#10;1. La duración de la jornada...&#10;&#10;Artículo 35.  Horas extraordinarias.&#10;1. Tendrán la consideración de horas extraordinarias..." style="min-height:200px"></textarea>
+        </div>
+        <button id="btnParseNormativa">Analizar texto</button>
+
+        <!-- Parse results preview -->
+        <div id="parseResults" style="display:none;margin-top:20px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <h3 style="margin:0">Artículos detectados</h3>
+                <div style="display:flex;align-items:center;gap:12px">
+                    <span id="parseStats" style="color:#8892b0;font-size:0.82rem"></span>
+                    <button id="btnProcessAll">Procesar todo</button>
+                </div>
+            </div>
+            <div id="parsedChunksTable"></div>
+            <div class="progress-log" id="bulkProgress"></div>
+        </div>
+
+        <hr style="border-color:#0f3460;margin:24px 0" />
+
+        <h3>Buscar chunks existentes</h3>
         <div class="search-bar">
             <input type="text" id="normativaSearch" placeholder="Buscar por sección..." />
             <input type="text" id="normativaLaw" placeholder="Filtrar por ley..." style="max-width:250px" />
             <button class="secondary" id="btnSearchNormativa">Buscar</button>
         </div>
         <div id="normativaTable"></div>
-
-        <h3>Añadir nuevo chunk</h3>
-        <div class="form-row">
-            <div class="form-group">
-                <label>Ley *</label>
-                <input type="text" id="normLaw" placeholder="Ej: Ley del Estatuto de los Trabajadores" />
-            </div>
-            <div class="form-group">
-                <label>Capítulo</label>
-                <input type="text" id="normChapter" placeholder="Ej: Capítulo II" />
-            </div>
-        </div>
-        <div class="form-group">
-            <label>Sección *</label>
-            <input type="text" id="normSection" placeholder="Ej: Artículo 34. Jornada" />
-        </div>
-        <div class="form-group">
-            <label>Texto *</label>
-            <textarea id="normText" placeholder="Texto completo del artículo o sección..."></textarea>
-        </div>
-        <button id="btnAddNormativa">Añadir chunk</button>
-        <div class="progress-log" id="normativaProgress"></div>
     </div>
 
     <!-- ═══ EDIT MODAL ═══ -->

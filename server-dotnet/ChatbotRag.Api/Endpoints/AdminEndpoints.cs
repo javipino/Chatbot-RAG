@@ -43,10 +43,12 @@ public static class AdminEndpoints
                 var descripcion = form["descripcion"].ToString();
                 var fecha = form["fecha"].ToString();
                 var emisor = form["emisor"].ToString();
+                var criterioNum = form["criterio_num"].ToString();
+                var estado = form["estado"].ToString();
 
                 using var stream = file.OpenReadStream();
                 var id = await admin.ProcessCriterioAsync(
-                    stream, titulo, descripcion, fecha, emisor,
+                    stream, titulo, descripcion, fecha, emisor, criterioNum, estado,
                     async msg => await SseHelper.WriteToolStatusAsync(ctx.Response, "pipeline", msg));
 
                 await SseHelper.WriteDoneAsync(ctx.Response, new { id, message = $"Criterio creado con ID {id}" });
@@ -84,6 +86,60 @@ public static class AdminEndpoints
                 return;
             }
             await ctx.Response.WriteAsJsonAsync(point);
+        });
+
+        // Auto-parse raw text into chunks and match against existing data
+        group.MapPost("/normativa/parse", async (HttpContext ctx, AdminService admin) =>
+        {
+            if (!AuthHelper.Validate(ctx)) return;
+
+            var req = await ctx.Request.ReadFromJsonAsync<NormativaParseRequest>();
+            if (req == null || string.IsNullOrWhiteSpace(req.Text))
+            {
+                ctx.Response.StatusCode = 400;
+                await ctx.Response.WriteAsJsonAsync(new { error = "El texto es obligatorio." });
+                return;
+            }
+
+            // Auto-detect law if not provided
+            var law = req.Law;
+            if (string.IsNullOrWhiteSpace(law))
+                law = AdminService.DetectLawName(req.Text);
+
+            // Parse into chunks
+            var chunks = AdminService.ParseNormativaText(req.Text, law ?? "");
+
+            // Auto-match against existing Qdrant data
+            if (!string.IsNullOrWhiteSpace(law))
+                await admin.AutoMatchChunksAsync(chunks);
+
+            await ctx.Response.WriteAsJsonAsync(new { detectedLaw = law, chunks });
+        });
+
+        // Bulk process: add/replace multiple chunks in one SSE stream
+        group.MapPost("/normativa/bulk", async (HttpContext ctx, AdminService admin) =>
+        {
+            if (!AuthHelper.Validate(ctx)) return;
+
+            SseHelper.SetSseHeaders(ctx.Response);
+            try
+            {
+                var req = await ctx.Request.ReadFromJsonAsync<NormativaBulkRequest>();
+                if (req == null || req.Chunks.Count == 0)
+                {
+                    await SseHelper.WriteErrorAsync(ctx.Response, "No se proporcionaron chunks.");
+                    return;
+                }
+
+                await admin.ProcessBulkNormativaAsync(req.Chunks,
+                    async msg => await SseHelper.WriteToolStatusAsync(ctx.Response, "pipeline", msg));
+
+                await SseHelper.WriteDoneAsync(ctx.Response, new { message = $"{req.Chunks.Count} chunks procesados." });
+            }
+            catch (Exception ex)
+            {
+                await SseHelper.WriteErrorAsync(ctx.Response, ex.Message);
+            }
         });
 
         group.MapPost("/normativa", async (HttpContext ctx, AdminService admin) =>

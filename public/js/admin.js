@@ -125,6 +125,8 @@ $('#btnUploadCriterio').addEventListener('click', async () => {
     form.append('descripcion', $('#criterioDescripcion').value.trim());
     form.append('fecha', $('#criterioFecha').value.trim());
     form.append('emisor', $('#criterioEmisor').value.trim());
+    form.append('criterio_num', $('#criterioNum').value.trim());
+    form.append('estado', $('#criterioEstado').value);
 
     const btn = $('#btnUploadCriterio');
     btn.disabled = true;
@@ -140,6 +142,8 @@ $('#btnUploadCriterio').addEventListener('click', async () => {
         $('#criterioDescripcion').value = '';
         $('#criterioFecha').value = '';
         $('#criterioEmisor').value = '';
+        $('#criterioNum').value = '';
+        $('#criterioEstado').value = 'Vigente';
         searchCriterios(); // refresh list
     });
 
@@ -200,6 +204,130 @@ window.deleteCriterio = async function(id) {
 // ══ NORMATIVA TAB
 // ══════════════════════════════════════
 
+// State for parsed chunks
+let parsedChunks = [];
+
+// ── Auto-parse text ──
+$('#btnParseNormativa').addEventListener('click', async () => {
+    const rawText = $('#normRawText').value.trim();
+    if (!rawText) return alert('Pega el texto de los artículos a procesar.');
+
+    const btn = $('#btnParseNormativa');
+    btn.disabled = true;
+    btn.textContent = 'Analizando...';
+
+    try {
+        const res = await fetch('/api/admin/normativa/parse', {
+            method: 'POST',
+            headers: { ...getHeaders(), 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                text: rawText,
+                law: $('#normLaw').value.trim() || null,
+            }),
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            alert(`Error: ${err.error || res.statusText}`);
+            return;
+        }
+
+        const data = await res.json();
+        parsedChunks = data.chunks || [];
+
+        // Auto-fill law if detected
+        if (data.detectedLaw && !$('#normLaw').value.trim()) {
+            $('#normLaw').value = data.detectedLaw;
+        }
+
+        renderParsedChunks();
+    } catch (err) {
+        alert(`Error de red: ${err.message}`);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Analizar texto';
+    }
+});
+
+function renderParsedChunks() {
+    const container = $('#parseResults');
+    if (parsedChunks.length === 0) {
+        container.style.display = 'none';
+        return;
+    }
+    container.style.display = 'block';
+
+    const replaceCount = parsedChunks.filter(c => c.action === 'replace').length;
+    const addCount = parsedChunks.filter(c => c.action === 'add').length;
+    $('#parseStats').textContent = `${parsedChunks.length} artículos · ${replaceCount} reemplazar · ${addCount} nuevos`;
+
+    let html = '';
+    for (let i = 0; i < parsedChunks.length; i++) {
+        const c = parsedChunks[i];
+        const isReplace = c.action === 'replace';
+        const badgeClass = isReplace ? 'badge-replace' : 'badge-add';
+        const badgeText = isReplace ? `Reemplazar ID ${c.existingId}` : 'Nuevo';
+        const existingInfo = isReplace && c.existingSection
+            ? `<span style="color:#888;font-size:0.72rem"> — existente: "${escapeHtml(truncate(c.existingSection, 50))}"</span>` : '';
+
+        html += `<div class="chunk-row">
+            <div class="chunk-info">
+                <div class="chunk-section">
+                    <span class="badge ${badgeClass}">${badgeText}</span>
+                    ${escapeHtml(truncate(c.section, 80))}${existingInfo}
+                </div>
+                <div class="chunk-meta">
+                    ${escapeHtml(c.law || '')}${c.chapter ? ' > ' + escapeHtml(c.chapter) : ''}
+                    · ${c.text.length.toLocaleString()} chars
+                </div>
+                <div class="chunk-preview">${escapeHtml(truncate(c.text, 150))}</div>
+            </div>
+            <div class="chunk-actions">
+                <select data-idx="${i}" class="action-select" style="background:#1a1a2e;border:1px solid #0f3460;color:#e0e0e0;padding:3px 6px;border-radius:3px;font-size:0.78rem">
+                    <option value="replace" ${isReplace ? 'selected' : ''} ${!c.existingId ? 'disabled' : ''}>Reemplazar</option>
+                    <option value="add" ${!isReplace ? 'selected' : ''}>Añadir nuevo</option>
+                    <option value="skip">Omitir</option>
+                </select>
+            </div>
+        </div>`;
+    }
+    $('#parsedChunksTable').innerHTML = html;
+    clearLog($('#bulkProgress'));
+
+    // Bind action select changes
+    $$('.action-select').forEach(sel => {
+        sel.addEventListener('change', (e) => {
+            const idx = parseInt(e.target.dataset.idx);
+            parsedChunks[idx].action = e.target.value;
+            renderParsedChunks(); // re-render badges
+        });
+    });
+}
+
+// ── Bulk process ──
+$('#btnProcessAll').addEventListener('click', async () => {
+    const toProcess = parsedChunks.filter(c => c.action !== 'skip');
+    if (toProcess.length === 0) return alert('No hay artículos seleccionados para procesar.');
+    if (!confirm(`¿Procesar ${toProcess.length} artículos? Esto enriquecerá, generará embeddings y subirá cada uno a Qdrant.`)) return;
+
+    const btn = $('#btnProcessAll');
+    btn.disabled = true;
+
+    await streamRequest('/api/admin/normativa/bulk', {
+        method: 'POST',
+        headers: { ...getHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chunks: toProcess }),
+    }, $('#bulkProgress'), () => {
+        // Clear raw text on success
+        $('#normRawText').value = '';
+        parsedChunks = [];
+        $('#parseResults').style.display = 'none';
+    });
+
+    btn.disabled = false;
+});
+
+// ── Search existing chunks ──
 async function searchNormativa() {
     const q = $('#normativaSearch').value.trim();
     const law = $('#normativaLaw').value.trim();
@@ -244,36 +372,6 @@ function renderNormativaTable(items) {
 $('#btnSearchNormativa').addEventListener('click', searchNormativa);
 $('#normativaSearch').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchNormativa(); });
 $('#normativaLaw').addEventListener('keydown', (e) => { if (e.key === 'Enter') searchNormativa(); });
-
-// ── Add new normativa chunk ──
-$('#btnAddNormativa').addEventListener('click', async () => {
-    const law = $('#normLaw').value.trim();
-    const section = $('#normSection').value.trim();
-    const text = $('#normText').value.trim();
-    if (!law || !section || !text) return alert('Ley, sección y texto son obligatorios.');
-
-    const btn = $('#btnAddNormativa');
-    btn.disabled = true;
-
-    await streamRequest('/api/admin/normativa', {
-        method: 'POST',
-        headers: { ...getHeaders(), 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            law,
-            chapter: $('#normChapter').value.trim(),
-            section,
-            text,
-        }),
-    }, $('#normativaProgress'), () => {
-        $('#normLaw').value = '';
-        $('#normChapter').value = '';
-        $('#normSection').value = '';
-        $('#normText').value = '';
-        searchNormativa();
-    });
-
-    btn.disabled = false;
-});
 
 // ── Edit normativa chunk ──
 window.editNormativa = async function(id) {
