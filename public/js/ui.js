@@ -349,11 +349,14 @@ export const UI = {
     // ==================== Formatting ====================
 
     escapeHtml(text) {
-        return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return String(text ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
     },
 
     formatContent(text) {
-        let html = this.escapeHtml(text);
+        const normalizedText = String(text ?? '')
+            .replace(/\r\n?/g, '\n')
+            .replace(/<br\s*\/?>/gi, '\n');
+        let html = this.escapeHtml(normalizedText);
 
         // Code blocks
         const codeBlocks = [];
@@ -413,7 +416,7 @@ export const UI = {
             }
 
             if (inList) { output.push(`</${listType}>`); inList = false; }
-            if (line.trim() === '') { output.push('<br>'); continue; }
+            if (line.trim() === '') continue;
             output.push(`<p>${this._inlineFormat(line)}</p>`);
         }
 
@@ -423,7 +426,7 @@ export const UI = {
         for (let i = 0; i < codeBlocks.length; i++) {
             html = html.replace(`%%CODEBLOCK${i}%%`, codeBlocks[i]);
         }
-        return html;
+        return html.replace(/<br\s*\/?>/gi, '');
     },
 
     _inlineFormat(text) {

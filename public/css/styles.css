@@ -505,11 +505,7 @@ body {
 }
 
 .msg.assistant .content br {
-    display: block;
-    content: "";
-    margin: 0;
-    line-height: 0.55;
-    font-size: 0.55em;
+    display: none;
 }
 
 .msg.error {
